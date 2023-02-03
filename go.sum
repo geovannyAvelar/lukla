@@ -1,0 +1,16 @@
+github.com/apeyroux/gosm v0.0.0-20141123101329-8f3e37d8629e h1:QjP8uN1guPCeaHpd/ktUQFKFgf2LN7OcijpfFGmPzEU=
+github.com/apeyroux/gosm v0.0.0-20141123101329-8f3e37d8629e/go.mod h1:mZyvRoHNtsjwoQWRQCGYAyXe3zRnyZ69fZQvCiY9sPo=
+github.com/go-chi/chi/v5 v5.0.8 h1:lD+NLqFcAi1ovnVZpsnObHGW4xb4J8lNmoYVfECH1Y0=
+github.com/go-chi/chi/v5 v5.0.8/go.mod h1:DslCQbL2OYiznFReuXYUmQ2hGd1aDpCnlMNITLSKoi8=
+github.com/lucasb-eyer/go-colorful v1.2.0 h1:1nnpGOrhyZZuNyfu1QjKiUICQ74+3FNCN69Aj6K7nkY=
+github.com/lucasb-eyer/go-colorful v1.2.0/go.mod h1:R4dSotOR9KMtayYi1e77YzuveK+i7ruzyGqttikkLy0=
+github.com/mazznoer/colorgrad v0.9.1 h1:MB80JYVndKWSMEM1beNqnuOowWGhoQc3DXWXkFp6JlM=
+github.com/mazznoer/colorgrad v0.9.1/go.mod h1:WX2R9wt9B47+txJZVVpM9LY+LAGIdi4lTI5wIyreDH4=
+github.com/mazznoer/csscolorparser v0.1.2 h1:/UBHuQg792ePmGFzTQAC9u+XbFr7/HzP/Gj70Phyz2A=
+github.com/mazznoer/csscolorparser v0.1.2/go.mod h1:Aj22+L/rYN/Y6bj3bYqO3N6g1dtdHtGfQ32xZ5PJQic=
+github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646 h1:zYyBkD/k9seD2A7fsi6Oo2LfFZAehjjQMERAvZLEDnQ=
+github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646/go.mod h1:jpp1/29i3P1S/RLdc7JQKbRpFeM1dOBd8T9ki5s+AY8=
+github.com/petoc/hgt v1.0.1 h1:VHwm3R2S2KBo2qmqIYS89DixiLZrqNhbjuUIDguE35k=
+github.com/petoc/hgt v1.0.1/go.mod h1:I9hRBdF/VrFQqraFI8tEi2AKIU06LOkA8FOGEHoD4j0=
+github.com/tidwall/geodesic v0.3.5 h1:v4IR7g749/8Lfm1LXqUWy7PkVMou8Aj5/8p6eXhanjs=
+github.com/tidwall/geodesic v0.3.5/go.mod h1:SNL5vSG4X+o0ExTya69PX7/ZQ2SAvmjAxI+o5ZGJsxs=
