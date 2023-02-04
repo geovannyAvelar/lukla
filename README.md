@@ -7,7 +7,7 @@
 
 First, you need SRTM30 digital elevation model data files in order to create heightmap tiles. 
 This dataset is huge, so it is impossible to host those files in this repository. So you need to download
-the HGT files and in data/unzipped folder. You can download them using [this tool](https://dwtkns.com/srtm30m/).
+the HGT files and in data/dem folder. You can download them using [this tool](https://dwtkns.com/srtm30m/).
 Remember you need to create a NASA Earthdata account. You can register [here](https://urs.earthdata.nasa.gov/users/new), it's free.
 
 ### With Make

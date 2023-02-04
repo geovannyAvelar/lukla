@@ -63,3 +63,29 @@ func GetRootPath() string {
 
 	return "/"
 }
+
+func GetTilesPath() string {
+	path := os.Getenv("LUKLA_TILES_PATH")
+
+	if path != "" {
+		return path
+	}
+
+	log.Warn("LUKLA_TILES_PATH enviroment variable is not defined." +
+		"Tiles will be stored in ./data/tiles folder")
+
+	return "data/tiles"
+}
+
+func GetDigitalElevationModelPath() string {
+	path := os.Getenv("DEM_FILES_PATH")
+
+	if path != "" {
+		return path
+	}
+
+	log.Warn("DEM_FILES_PATH enviroment variable is not defined." +
+		"Tiles will be stored in ./data/dem folder")
+
+	return "data/dem"
+}
