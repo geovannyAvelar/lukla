@@ -23,4 +23,3 @@ You can use Make to compile. Just use one of the following commands to compile t
 This is a pretty simple project and it might be improved.
 
 - Write unit tests and improve the code testability;
-- Create a cache mecanism to store tiles and prevent them to be reacreated each request.
