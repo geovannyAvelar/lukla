@@ -1,5 +1,5 @@
 # Lukla
- API to create heightmaps based on SRTM30 digital elevation model. 
+ Lukla is an API to create heightmaps based on SRTM30 digital elevation model. 
 
 ## Build instructions
 
