@@ -1,17 +1,17 @@
 package main
 
 import (
-	"fmt"
-	"net/http"
-	"strconv"
-
-	"github.com/go-chi/chi/v5"
+	"github.com/geovannyAvelar/lukla/internal"
+	"github.com/go-chi/chi"
 	"github.com/petoc/hgt"
+	log "github.com/sirupsen/logrus"
 )
 
-var heightmap Heightmap
-
 func main() {
+	log.SetFormatter(&log.TextFormatter{
+		FullTimestamp: true,
+	})
+
 	h, err := hgt.OpenDataDir("data/unzipped", nil)
 
 	if err != nil {
@@ -20,40 +20,16 @@ func main() {
 
 	defer h.Close()
 
-	heightmap = Heightmap{
+	heightmap := internal.Heightmap{
 		ElevationDataset: h,
 	}
 
-	router := chi.NewRouter()
-	router.Get("/{z}/{x}/{y}.png", handleTile)
-
-	http.ListenAndServe(":8000", router)
-}
-
-func handleTile(w http.ResponseWriter, r *http.Request) {
-	xParam := chi.URLParam(r, "x")
-	yParam := chi.URLParam(r, "y")
-	zParam := chi.URLParam(r, "z")
-
-	x, xParseErr := strconv.Atoi(xParam)
-	y, yParseErr := strconv.Atoi(yParam)
-	z, zParseErr := strconv.Atoi(zParam)
-
-	if xParseErr != nil || yParseErr != nil || zParseErr != nil {
-		http.Error(w, "coordinates parse error", http.StatusBadRequest)
-		return
+	api := internal.HttpApi{
+		Router:         chi.NewRouter(),
+		Heightmap:      heightmap,
+		BasePath:       internal.GetRootPath(),
+		AllowedOrigins: internal.GetAllowedOrigins(),
 	}
 
-	bytes, err := heightmap.GetTileHeightmap(z, x, y)
-
-	if err != nil {
-		http.Error(w, "cannot generate heightmap. "+err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	contentDisposition := fmt.Sprintf("inline; filename=\"%d.png\"", y)
-
-	w.Header().Add("Content-Type", "image/png")
-	w.Header().Add("Content-Disposition", contentDisposition)
-	w.Write(bytes)
+	api.Run(internal.GetApiPort())
 }

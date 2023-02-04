@@ -1,4 +1,4 @@
-package main
+package internal
 
 import (
 	"bufio"
@@ -17,12 +17,13 @@ import (
 
 const HEIGHT_DATA_RESOLUTION = 30
 
-var (
-	errNoDataToProcess = errors.New("no elevation data to process")
-)
-
 var ZOOM_LEVEL_SIDE = map[int]int{
-	10: 36310,
+	10: 35817,
+	11: 18023,
+	12: 4635,
+	13: 4503,
+	14: 2251,
+	15: 292,
 }
 
 type Elevation struct {
@@ -30,10 +31,10 @@ type Elevation struct {
 	Height    int
 	MinHeight int16
 	MaxHeight int16
-	Points    []HeightData
+	Points    []Point
 }
 
-type HeightData struct {
+type Point struct {
 	X, Y      int
 	Lat, Lon  float64
 	Elevation int16
@@ -48,11 +49,19 @@ type HeightmapResolutionConfig struct {
 	Heigth int
 }
 
-func (t *Heightmap) GetTileHeightmap(z, x, y int) ([]byte, error) {
+func (t *Heightmap) GetTileHeightmap(z, x, y, resolution int) ([]byte, error) {
 	osmTile := gosm.NewTileWithXY(x, y, z)
 	lat, lon := osmTile.Num2deg()
 
-	return t.createHeightMapImage(lat, lon, ZOOM_LEVEL_SIDE[z], &HeightmapResolutionConfig{256, 256})
+	tileSide := 0
+	if val, ok := ZOOM_LEVEL_SIDE[z]; ok {
+		tileSide = val
+	} else {
+		return []byte{}, errors.New("invalid zoom level. Minimum zoom level is 10, maximum is 15")
+	}
+
+	return t.createHeightMapImage(lat, lon, tileSide,
+		&HeightmapResolutionConfig{resolution, resolution})
 }
 
 func (t *Heightmap) createHeightMapImage(lat, lon float64, side int,
@@ -79,7 +88,7 @@ func (t *Heightmap) createHeightMapImage(lat, lon float64, side int,
 	writer := bufio.NewWriter(&b)
 
 	if conf != nil && conf.Heigth > 0 && conf.Width > 0 {
-		resizedImg := resize.Resize(256, 256, imgRgba, resize.Lanczos3)
+		resizedImg := resize.Resize(uint(conf.Width), uint(conf.Heigth), imgRgba, resize.Lanczos3)
 		err := png.Encode(writer, resizedImg)
 
 		if err != nil {
@@ -99,7 +108,7 @@ func (t *Heightmap) createHeightMapImage(lat, lon float64, side int,
 func (t *Heightmap) createHeightProfile(lat, lon float64, side int) (Elevation, error) {
 	step := int(math.Ceil(float64(side) / float64(HEIGHT_DATA_RESOLUTION)))
 
-	points := make([]HeightData, step*step)
+	points := make([]Point, step*step)
 
 	var minHeight int16 = 0
 	var maxHeight int16 = 0
@@ -128,14 +137,10 @@ func (t *Heightmap) createHeightProfile(lat, lon float64, side int) (Elevation, 
 				maxHeight = e
 			}
 
-			points[i] = HeightData{x / HEIGHT_DATA_RESOLUTION, y / HEIGHT_DATA_RESOLUTION, pLat, pLon, e}
+			points[i] = Point{x / HEIGHT_DATA_RESOLUTION, y / HEIGHT_DATA_RESOLUTION, pLat, pLon, e}
 
 			i++
 		}
-	}
-
-	if i == 0 {
-		return Elevation{}, errNoDataToProcess
 	}
 
 	return Elevation{
