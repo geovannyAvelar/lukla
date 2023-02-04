@@ -4,9 +4,13 @@ import (
 	"bufio"
 	"bytes"
 	"errors"
+	"fmt"
 	"image"
 	"image/png"
 	"math"
+	"os"
+	"strconv"
+	"strings"
 
 	"github.com/apeyroux/gosm"
 	"github.com/mazznoer/colorgrad"
@@ -16,6 +20,8 @@ import (
 )
 
 const HEIGHT_DATA_RESOLUTION = 30
+
+var FILE_PATH_SEP = strings.ReplaceAll(strconv.QuoteRune(os.PathSeparator), "'", "")
 
 var ZOOM_LEVEL_SIDE = map[int]int{
 	10: 35817,
@@ -42,6 +48,7 @@ type Point struct {
 
 type Heightmap struct {
 	ElevationDataset *hgt.DataDir
+	Dir              string
 }
 
 type HeightmapResolutionConfig struct {
@@ -50,6 +57,12 @@ type HeightmapResolutionConfig struct {
 }
 
 func (t *Heightmap) GetTileHeightmap(z, x, y, resolution int) ([]byte, error) {
+	bytes, err := t.getTileFromDisk(x, y, z, resolution)
+
+	if err == nil {
+		return bytes, nil
+	}
+
 	osmTile := gosm.NewTileWithXY(x, y, z)
 	lat, lon := osmTile.Num2deg()
 
@@ -60,8 +73,16 @@ func (t *Heightmap) GetTileHeightmap(z, x, y, resolution int) ([]byte, error) {
 		return []byte{}, errors.New("invalid zoom level. Minimum zoom level is 10, maximum is 15")
 	}
 
-	return t.createHeightMapImage(lat, lon, tileSide,
+	bytes, err = t.createHeightMapImage(lat, lon, tileSide,
 		&HeightmapResolutionConfig{resolution, resolution})
+
+	if err != nil {
+		return []byte{}, err
+	}
+
+	go t.saveTile(x, y, z, resolution, bytes)
+
+	return bytes, nil
 }
 
 func (t *Heightmap) createHeightMapImage(lat, lon float64, side int,
@@ -150,4 +171,58 @@ func (t *Heightmap) createHeightProfile(lat, lon float64, side int) (Elevation, 
 		MaxHeight: maxHeight,
 		Points:    points,
 	}, nil
+}
+
+func (t *Heightmap) saveTile(x int, y int, z, resolution int, bytes []byte) (string, error) {
+	dir := formatTileDirPath(t.Dir, x, z, resolution)
+	err := os.MkdirAll(dir, os.ModePerm)
+
+	if err != nil {
+		return "", fmt.Errorf("cannot create directories to store tiles. Cause: %w", err)
+	}
+
+	filepath := fmt.Sprintf("%s/%d.png", dir, y)
+
+	if _, err := os.Stat(filepath); err == nil {
+		return filepath, nil
+	}
+
+	err = os.WriteFile(filepath, bytes, 0644)
+
+	if err != nil {
+		return "", fmt.Errorf("cannot create tile file. Cause: %w", err)
+	}
+
+	return filepath, nil
+}
+
+func (t *Heightmap) getTileFromDisk(x, y, z, resolution int) ([]byte, error) {
+	path := formatTilePath(t.Dir, x, y, z, resolution)
+
+	if _, err := os.Stat(path); err != nil {
+		return nil, errors.New("tile is not cached")
+	}
+
+	bytes, err := os.ReadFile(path)
+
+	if err != nil {
+		return nil, fmt.Errorf("cannot read tile from disk. Cause: %w", err)
+	}
+
+	return bytes, nil
+}
+
+func formatTilePath(dir string, x, y, z, resolution int) string {
+	dir = formatTileDirPath(dir, x, z, resolution)
+	yStr := fmt.Sprintf("%d", y)
+
+	return dir + FILE_PATH_SEP + yStr + ".png"
+}
+
+func formatTileDirPath(dir string, x, z, resolution int) string {
+	resStr := fmt.Sprintf("%d", resolution)
+	xStr := fmt.Sprintf("%d", x)
+	zStr := fmt.Sprintf("%d", z)
+
+	return dir + FILE_PATH_SEP + resStr + FILE_PATH_SEP + zStr + FILE_PATH_SEP + xStr
 }

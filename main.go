@@ -12,7 +12,7 @@ func main() {
 		FullTimestamp: true,
 	})
 
-	h, err := hgt.OpenDataDir("data/unzipped", nil)
+	h, err := hgt.OpenDataDir(internal.GetDigitalElevationModelPath(), nil)
 
 	if err != nil {
 		panic(err)
@@ -22,6 +22,7 @@ func main() {
 
 	heightmap := internal.Heightmap{
 		ElevationDataset: h,
+		Dir:              internal.GetTilesPath(),
 	}
 
 	api := internal.HttpApi{
