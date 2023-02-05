@@ -1,5 +1,5 @@
 # Lukla
-Lukla is an API to create heightmaps based on SRTM30 digital elevation model. 
+Lukla is an API to create real world heightmaps based on [Shuttle Radar Topography Mission (SRTM30m)](https://en.wikipedia.org/wiki/Shuttle_Radar_Topography_Mission) digital elevation model. 
 
 This program is pretty incomplete yet. I need to write unit tests and add some features.
 
