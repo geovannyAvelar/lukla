@@ -9,6 +9,8 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// Get the allowed API origins from LUKLA_ALLOWED_ORIGINS enviroment variable
+// If the variable is not present, returns local origin
 func GetAllowedOrigins() []string {
 	envVar := os.Getenv("LUKLA_ALLOWED_ORIGINS")
 
@@ -21,6 +23,8 @@ func GetAllowedOrigins() []string {
 	return []string{GetLocalHost()}
 }
 
+// Get the API port from LUKLA_PORT enviroment variable
+// If LUKLA_PORT is not filled, uses 9000 port
 func GetApiPort() int {
 	envVar := os.Getenv("LUKLA_PORT")
 
@@ -40,6 +44,7 @@ func GetApiPort() int {
 	return 9000
 }
 
+// Returns API hostname (with port)
 func GetLocalHost() string {
 	logLevel := log.GetLevel()
 
@@ -50,6 +55,7 @@ func GetLocalHost() string {
 	return fmt.Sprintf("http://localhost:%d", port)
 }
 
+// Returns API root path. Default is /
 func GetRootPath() string {
 	root := os.Getenv("LUKLA_BASE_PATH")
 
@@ -64,6 +70,7 @@ func GetRootPath() string {
 	return "/"
 }
 
+// Returns tiles cache directory. Default is 'data/tiles'
 func GetTilesPath() string {
 	path := os.Getenv("LUKLA_TILES_PATH")
 
@@ -77,6 +84,7 @@ func GetTilesPath() string {
 	return "data/tiles"
 }
 
+// Returns digital elevation model (DEM) dataset directory. Fallback is 'data/dem'
 func GetDigitalElevationModelPath() string {
 	path := os.Getenv("DEM_FILES_PATH")
 

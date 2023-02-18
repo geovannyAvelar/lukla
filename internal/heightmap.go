@@ -19,10 +19,13 @@ import (
 	"github.com/tidwall/geodesic"
 )
 
+// Digital Elevation Model (DEM) resolution in meters
 const HEIGHT_DATA_RESOLUTION = 30
 
+// Path separator
 var FILE_PATH_SEP = strings.ReplaceAll(strconv.QuoteRune(os.PathSeparator), "'", "")
 
+// Tile side in meters for each zoom level in OpenStreetMap (OSM)
 var ZOOM_LEVEL_SIDE = map[int]int{
 	10: 35817,
 	11: 18023,
@@ -32,6 +35,7 @@ var ZOOM_LEVEL_SIDE = map[int]int{
 	15: 292,
 }
 
+// Represents a heightmap in memory
 type Elevation struct {
 	Width     int
 	Height    int
@@ -40,13 +44,16 @@ type Elevation struct {
 	Points    []Point
 }
 
+// Elevation of a specific geographic point represented by latitude and longitude (WGS84)
+// X and Y represents a point in the heightmap image
 type Point struct {
 	X, Y      int
 	Lat, Lon  float64
 	Elevation int16
 }
 
-type Heightmap struct {
+// Generate heightmaps based on a digital elevation model (DEM) dataset
+type HeightmapGenerator struct {
 	ElevationDataset *hgt.DataDir
 	Dir              string
 }
@@ -56,7 +63,8 @@ type HeightmapResolutionConfig struct {
 	Heigth int
 }
 
-func (t *Heightmap) GetTileHeightmap(z, x, y, resolution int) ([]byte, error) {
+// Generate a heightmap with the same size of an OpenStreetMap (OSM) tile
+func (t *HeightmapGenerator) GetTileHeightmap(z, x, y, resolution int) ([]byte, error) {
 	bytes, err := t.getTileFromDisk(x, y, z, resolution)
 
 	if err == nil {
@@ -85,7 +93,7 @@ func (t *Heightmap) GetTileHeightmap(z, x, y, resolution int) ([]byte, error) {
 	return bytes, nil
 }
 
-func (t *Heightmap) createHeightMapImage(lat, lon float64, side int,
+func (t *HeightmapGenerator) createHeightMapImage(lat, lon float64, side int,
 	conf *HeightmapResolutionConfig) ([]byte, error) {
 	elevation, err := t.createHeightProfile(lat, lon, side)
 
@@ -126,7 +134,7 @@ func (t *Heightmap) createHeightMapImage(lat, lon float64, side int,
 	return b.Bytes(), nil
 }
 
-func (t *Heightmap) createHeightProfile(lat, lon float64, side int) (Elevation, error) {
+func (t *HeightmapGenerator) createHeightProfile(lat, lon float64, side int) (Elevation, error) {
 	step := int(math.Ceil(float64(side) / float64(HEIGHT_DATA_RESOLUTION)))
 
 	points := make([]Point, step*step)
@@ -173,7 +181,7 @@ func (t *Heightmap) createHeightProfile(lat, lon float64, side int) (Elevation, 
 	}, nil
 }
 
-func (t *Heightmap) saveTile(x int, y int, z, resolution int, bytes []byte) (string, error) {
+func (t *HeightmapGenerator) saveTile(x int, y int, z, resolution int, bytes []byte) (string, error) {
 	dir := formatTileDirPath(t.Dir, x, z, resolution)
 	err := os.MkdirAll(dir, os.ModePerm)
 
@@ -196,7 +204,7 @@ func (t *Heightmap) saveTile(x int, y int, z, resolution int, bytes []byte) (str
 	return filepath, nil
 }
 
-func (t *Heightmap) getTileFromDisk(x, y, z, resolution int) ([]byte, error) {
+func (t *HeightmapGenerator) getTileFromDisk(x, y, z, resolution int) ([]byte, error) {
 	path := formatTilePath(t.Dir, x, y, z, resolution)
 
 	if _, err := os.Stat(path); err != nil {
