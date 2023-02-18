@@ -20,14 +20,14 @@ func main() {
 
 	defer h.Close()
 
-	heightmap := internal.Heightmap{
+	heightmapGen := internal.HeightmapGenerator{
 		ElevationDataset: h,
 		Dir:              internal.GetTilesPath(),
 	}
 
 	api := internal.HttpApi{
 		Router:         chi.NewRouter(),
-		Heightmap:      heightmap,
+		HeightmapGen:   heightmapGen,
 		BasePath:       internal.GetRootPath(),
 		AllowedOrigins: internal.GetAllowedOrigins(),
 	}

@@ -14,7 +14,7 @@ import (
 
 type HttpApi struct {
 	Router         *chi.Mux
-	Heightmap      Heightmap
+	HeightmapGen   HeightmapGenerator
 	BasePath       string
 	AllowedOrigins []string
 }
@@ -50,7 +50,7 @@ func (a *HttpApi) handleTile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	bytes, err := a.Heightmap.GetTileHeightmap(tileCoords["z"], tileCoords["x"], tileCoords["y"],
+	bytes, err := a.HeightmapGen.GetTileHeightmap(tileCoords["z"], tileCoords["x"], tileCoords["y"],
 		resolution)
 
 	if err != nil {
