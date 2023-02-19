@@ -27,7 +27,7 @@ go.work
 data/
 
 # Elevation files
-*.hgt
+data/*.hgt
 
 # Zip files
 *.zip
