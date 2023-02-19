@@ -3,7 +3,7 @@ Lukla is an API to create real world heightmaps based on [Shuttle Radar Topograp
 
 This program is pretty incomplete yet. I need to write unit tests and add some features.
 
-![heigtmap](https://user-images.githubusercontent.com/7998054/216774590-7bf1eeb4-72a1-4731-8b60-4e09ed329f2d.png)
+![heigthmap](https://user-images.githubusercontent.com/7998054/216774590-7bf1eeb4-72a1-4731-8b60-4e09ed329f2d.png)
 
 ## Build instructions
 
@@ -20,11 +20,21 @@ You can use Make to compile. Just use one of the following commands to compile t
 - ```make build-windows```
 - ```make build-darwin``` (MacOS)
 
+## Enviroment variables
+None of the following variables are mandatory, but you will probably need some of them to correctly set-up the API.
+
+* **LUKLA_ALLOWED_ORIGINS**: API allowed origins, separated by commas (,). If not defined, default is *http://localhost:PORT*;
+* **LUKLA_PORT**: API HTTP port. Default is *9000*;
+* **LUKLA_BASE_PATH**: API base path. Default is */*;
+* **LUKLA_TILES_PATH**: Directory where generated heightmap images are cached. Default is *./data/tiles*;
+* **DEM_FILES_PATH**: Directory where SRTM30 Digital elevation model .hgt files are stored. Default is *./data/dem*.
+
 ## Roadmap
 
 This is a pretty simple project and it might be improved.
 
 - Write unit tests and improve the code testability;
+- Dockerize the app;
 - Capability to create a heightmap based on a bounding box (instead of just use OSM tiles);
 - Support to different zoom levels when creating OSM tiles (lower zoom levels must use bigger DEM resolutions in order to maintain a good perfomance). Now, Lukla just support zoom levels bigger than 10;
 - Create a way to download SRTM30m files from NASA server;
