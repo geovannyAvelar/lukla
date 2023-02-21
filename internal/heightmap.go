@@ -58,7 +58,7 @@ type HeightmapGenerator struct {
 	Dir              string
 }
 
-type HeightmapResolutionConfig struct {
+type heightmapResolutionConfig struct {
 	Width  int
 	Heigth int
 }
@@ -82,7 +82,7 @@ func (t *HeightmapGenerator) GetTileHeightmap(z, x, y, resolution int) ([]byte, 
 	}
 
 	bytes, err = t.createHeightMapImage(lat, lon, tileSide,
-		&HeightmapResolutionConfig{resolution, resolution})
+		&heightmapResolutionConfig{resolution, resolution})
 
 	if err != nil {
 		return []byte{}, err
@@ -94,7 +94,7 @@ func (t *HeightmapGenerator) GetTileHeightmap(z, x, y, resolution int) ([]byte, 
 }
 
 func (t *HeightmapGenerator) createHeightMapImage(lat, lon float64, side int,
-	conf *HeightmapResolutionConfig) ([]byte, error) {
+	conf *heightmapResolutionConfig) ([]byte, error) {
 	elevation, err := t.createHeightProfile(lat, lon, side)
 
 	if err != nil {
