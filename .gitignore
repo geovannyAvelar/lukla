@@ -28,6 +28,7 @@ data/
 
 # Elevation files
 data/*.hgt
+heightmap/testdata/dem/*.hgt
 
 # Zip files
 *.zip
