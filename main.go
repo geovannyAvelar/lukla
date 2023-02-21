@@ -1,6 +1,8 @@
 package main
 
 import (
+	"github.com/geovannyAvelar/lukla/api"
+	"github.com/geovannyAvelar/lukla/heightmap"
 	"github.com/geovannyAvelar/lukla/internal"
 	"github.com/go-chi/chi"
 	"github.com/petoc/hgt"
@@ -20,12 +22,12 @@ func main() {
 
 	defer h.Close()
 
-	heightmapGen := internal.HeightmapGenerator{
+	heightmapGen := heightmap.HeightmapGenerator{
 		ElevationDataset: h,
 		Dir:              internal.GetTilesPath(),
 	}
 
-	api := internal.HttpApi{
+	api := api.HttpApi{
 		Router:         chi.NewRouter(),
 		HeightmapGen:   heightmapGen,
 		BasePath:       internal.GetRootPath(),
