@@ -86,13 +86,13 @@ func GetTilesPath() string {
 
 // Returns digital elevation model (DEM) dataset directory. Fallback is 'data/dem'
 func GetDigitalElevationModelPath() string {
-	path := os.Getenv("DEM_FILES_PATH")
+	path := os.Getenv("LUKLA_DEM_FILES_PATH")
 
 	if path != "" {
 		return path
 	}
 
-	log.Warn("DEM_FILES_PATH enviroment variable is not defined." +
+	log.Warn("LUKLA_DEM_FILES_PATH enviroment variable is not defined." +
 		"Tiles will be stored in ./data/dem folder")
 
 	return "data/dem"
