@@ -20,7 +20,7 @@ You can use Make to compile. Just use one of the following commands to compile t
 - ```make build-windows```
 - ```make build-darwin``` (MacOS)
 
-## Enviroment variables
+## Environment variables
 None of the following variables are mandatory, but you will probably need some of them to correctly set-up the API.
 
 * **LUKLA_ALLOWED_ORIGINS**: API allowed origins, separated by commas (,). If not defined, default is *http://localhost:PORT*;
