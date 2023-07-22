@@ -28,23 +28,43 @@ type Srtm30Downloader struct {
 }
 
 func (d *Srtm30Downloader) DownloadDemFile(pLat, pLon float64) (string, error) {
-	zipPath, _, err := d.downloadZippedDemFile(pLat, pLon)
+	filename := generateZipDemFileName(pLat, pLon)
+	zipFilepath := d.Dir + FILE_PATH_SEP + filename
 
-	if err != nil {
-		return "", fmt.Errorf("cannot download HGT file for coordinates %f, %f. Cause %w", pLat, pLon, err)
+	demFilePath := strings.ReplaceAll(zipFilepath, ".zip", "")
+	demFilePath = strings.ReplaceAll(demFilePath, ".SRTMGL1", "")
+
+	if !d.checkIfDemFileExists(demFilePath) {
+		zipPath, _, err := d.downloadZippedDemFile(pLat, pLon)
+
+		if err != nil {
+			return "", fmt.Errorf("cannot download HGT file for coordinates %f, %f. Cause %w", pLat, pLon, err)
+		}
+
+		demPath := strings.ReplaceAll(zipPath, ".zip", "")
+
+		if d.checkIfDemFileExists(demPath) {
+			return demPath, nil
+		}
+
+		files, err := d.unzip(zipPath, d.Dir)
+
+		if err != nil {
+			return "", fmt.Errorf("cannot unzip file %s. Cause %w", zipPath, err)
+		}
+
+		if len(files) < 1 {
+			return "", fmt.Errorf("cannot uncompress file %s", zipPath)
+		}
+
+		log.Infof("File %s is uncompressed", zipPath)
+
+		os.Remove(zipPath)
+
+		return files[0], nil
 	}
 
-	files, err := d.unzip(zipPath, d.Dir)
-
-	if err != nil {
-		return "", fmt.Errorf("cannot unzip file %s. Cause %w", zipPath, err)
-	}
-
-	if len(files) < 1 {
-		return "", fmt.Errorf("cannot uncompress file %s", zipPath)
-	}
-
-	return files[0], nil
+	return demFilePath, nil
 }
 
 func (d *Srtm30Downloader) downloadZippedDemFile(lat, lon float64) (string, []byte, error) {
@@ -78,6 +98,8 @@ func (d *Srtm30Downloader) downloadZippedDemFile(lat, lon float64) (string, []by
 	req.Header.Add("Authorization", "Bearer "+token.AccessToken)
 
 	resp, err := client.Do(req)
+
+	log.Infof("Downloading file %s from SRTM30m server...", filename)
 
 	if err != nil {
 		err := fmt.Errorf("cannot download hgt file %s. Cause: %w", filename, err)
@@ -117,6 +139,8 @@ func (d *Srtm30Downloader) saveZipHgtFile(path string, bytes []byte) error {
 	if err != nil {
 		return fmt.Errorf("cannot save HGT file %s. cause: %w", path, err)
 	}
+
+	log.Infof("Zip file save on %s", path)
 
 	return nil
 }
