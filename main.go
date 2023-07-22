@@ -4,12 +4,18 @@ import (
 	"github.com/geovannyAvelar/lukla/api"
 	"github.com/geovannyAvelar/lukla/heightmap"
 	"github.com/geovannyAvelar/lukla/internal"
+	"github.com/geovannyAvelar/lukla/srtm"
 	"github.com/go-chi/chi"
+	"github.com/joho/godotenv"
 	"github.com/petoc/hgt"
 	log "github.com/sirupsen/logrus"
 )
 
 func main() {
+	if err := godotenv.Load(".env"); err != nil {
+		log.Warn("Error loading env file")
+	}
+
 	log.SetFormatter(&log.TextFormatter{
 		FullTimestamp: true,
 	})
@@ -22,8 +28,15 @@ func main() {
 
 	defer h.Close()
 
+	srtmDownloader := &srtm.Srtm30Downloader{
+		Dir: internal.GetDigitalElevationModelPath(),
+		Api: srtm.EarthdataApi{Username: internal.GetEarthDataApiUsername(),
+			Password: internal.GetEarthDataApiPassword()},
+	}
+
 	heightmapGen := heightmap.HeightmapGenerator{
 		ElevationDataset: h,
+		SrtmDownloader:   srtmDownloader,
 		Dir:              internal.GetTilesPath(),
 	}
 

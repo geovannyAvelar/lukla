@@ -13,7 +13,7 @@ var server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *
 	w.Write(payload)
 }))
 
-func TestDownloadDemFile(t *testing.T) {
+func TestDownloadZippedDemFile(t *testing.T) {
 	t.Parallel()
 
 	d := Srtm30Downloader{
@@ -21,15 +21,15 @@ func TestDownloadDemFile(t *testing.T) {
 		Dir:      "testdata/dem",
 	}
 
-	hgt, err := d.DownloadDemFile(27.687619, 86.731679)
+	path, b, err := d.downloadZippedDemFile(27.687619, 86.731679)
 
 	if err != nil {
 		t.Errorf("error during hgt file download. cause: %s", err)
 	}
 
-	if !bytes.Equal(hgt.Bytes, payload) {
+	if !bytes.Equal(b, payload) {
 		t.Errorf("returned bytes are different of payload bytes")
 	}
 
-	os.Remove(hgt.Path)
+	os.Remove(path)
 }

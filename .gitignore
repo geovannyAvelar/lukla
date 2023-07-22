@@ -35,3 +35,6 @@ heightmap/testdata/dem/*.hgt
 
 # Image files
 *.png
+
+# Dotfiles
+.env
