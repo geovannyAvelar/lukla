@@ -13,14 +13,23 @@ import (
 	"strings"
 
 	"github.com/apeyroux/gosm"
+	"github.com/geovannyAvelar/lukla/srtm"
 	"github.com/mazznoer/colorgrad"
 	"github.com/nfnt/resize"
 	"github.com/petoc/hgt"
 	"github.com/tidwall/geodesic"
+
+	log "github.com/sirupsen/logrus"
 )
 
 // Digital Elevation Model (DEM) resolution in meters
 const HEIGHT_DATA_RESOLUTION = 30
+
+// Azimuth angle pointing to the south
+const SOUTH_AZIMUTH = 180
+
+// Azimtuh angle pointing to the east
+const EAST_AZIMUTH = 90
 
 // Path separator
 var FILE_PATH_SEP = strings.ReplaceAll(strconv.QuoteRune(os.PathSeparator), "'", "")
@@ -55,6 +64,7 @@ type Point struct {
 // Generate heightmaps based on a digital elevation model (DEM) dataset
 type HeightmapGenerator struct {
 	ElevationDataset *hgt.DataDir
+	SrtmDownloader   *srtm.Srtm30Downloader
 	Dir              string
 }
 
@@ -146,11 +156,20 @@ func (t *HeightmapGenerator) createHeightProfile(lat, lon float64, side int) (El
 	for x := 0; x < side; x = x + HEIGHT_DATA_RESOLUTION {
 		var new_lat float64
 		var new_lon float64
-		geodesic.WGS84.Direct(lat, lon, 180, float64(x), &new_lat, &new_lon, nil)
+		geodesic.WGS84.Direct(lat, lon, SOUTH_AZIMUTH, float64(x), &new_lat, &new_lon, nil)
 
 		for y := 0; y < side; y = y + HEIGHT_DATA_RESOLUTION {
 			var pLat, pLon float64
-			geodesic.WGS84.Direct(new_lat, new_lon, 90, float64(y), &pLat, &pLon, nil)
+			geodesic.WGS84.Direct(new_lat, new_lon, EAST_AZIMUTH, float64(y), &pLat, &pLon, nil)
+
+			if t.SrtmDownloader != nil {
+				_, err := t.SrtmDownloader.DownloadDemFile(pLat, pLon)
+
+				if err != nil {
+					msg := "cannot download digital elevation model file for coordinate %f, %f. Cause: %s"
+					log.Warnf(msg, pLat, pLon, err)
+				}
+			}
 
 			e, _, _ := t.ElevationDataset.ElevationAt(pLat, pLon)
 
