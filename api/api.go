@@ -88,7 +88,7 @@ func (a *HttpApi) parseTileResolution(r *http.Request) int {
 	resParam := chi.URLParam(r, "resolution")
 	resolution, errResParse := strconv.Atoi(resParam)
 
-	if errResParse != nil || resolution <= 0 || resolution > 1024 {
+	if errResParse != nil || resolution <= 0 || resolution > 2048 {
 		resolution = 256
 	}
 
