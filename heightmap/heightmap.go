@@ -68,7 +68,7 @@ type HeightmapGenerator struct {
 	Dir              string
 }
 
-type heightmapResolutionConfig struct {
+type HeightmapResolutionConfig struct {
 	Width  int
 	Heigth int
 }
@@ -91,8 +91,8 @@ func (t *HeightmapGenerator) GetTileHeightmap(z, x, y, resolution int) ([]byte, 
 		return []byte{}, errors.New("invalid zoom level. Minimum zoom level is 10, maximum is 15")
 	}
 
-	bytes, err = t.createHeightMapImage(lat, lon, tileSide,
-		&heightmapResolutionConfig{resolution, resolution})
+	bytes, err = t.CreateHeightMapImage(lat, lon, tileSide,
+		HeightmapResolutionConfig{resolution, resolution})
 
 	if err != nil {
 		return []byte{}, err
@@ -103,8 +103,8 @@ func (t *HeightmapGenerator) GetTileHeightmap(z, x, y, resolution int) ([]byte, 
 	return bytes, nil
 }
 
-func (t *HeightmapGenerator) createHeightMapImage(lat, lon float64, side int,
-	conf *heightmapResolutionConfig) ([]byte, error) {
+func (t *HeightmapGenerator) CreateHeightMapImage(lat, lon float64, side int,
+	conf HeightmapResolutionConfig) ([]byte, error) {
 	elevation, err := t.createHeightProfile(lat, lon, side)
 
 	if err != nil {
@@ -126,7 +126,7 @@ func (t *HeightmapGenerator) createHeightMapImage(lat, lon float64, side int,
 	var b bytes.Buffer
 	writer := bufio.NewWriter(&b)
 
-	if conf != nil && conf.Heigth > 0 && conf.Width > 0 {
+	if conf.Heigth > 0 && conf.Width > 0 {
 		resizedImg := resize.Resize(uint(conf.Width), uint(conf.Heigth), imgRgba, resize.Lanczos3)
 		err := png.Encode(writer, resizedImg)
 
@@ -145,7 +145,7 @@ func (t *HeightmapGenerator) createHeightMapImage(lat, lon float64, side int,
 }
 
 func (t *HeightmapGenerator) createHeightProfile(lat, lon float64, side int) (Elevation, error) {
-	step := int(math.Ceil(float64(side) / float64(HEIGHT_DATA_RESOLUTION)))
+	step := int(math.Ceil(float64(side)/float64(HEIGHT_DATA_RESOLUTION))) + 1
 
 	points := make([]Point, step*step)
 
@@ -188,6 +188,21 @@ func (t *HeightmapGenerator) createHeightProfile(lat, lon float64, side int) (El
 			points[i] = Point{x / HEIGHT_DATA_RESOLUTION, y / HEIGHT_DATA_RESOLUTION, pLat, pLon, e}
 
 			i++
+
+			if y == side-(side%HEIGHT_DATA_RESOLUTION) {
+				var pLat, pLon float64
+				geodesic.WGS84.Direct(new_lat, new_lon, SOUTH_AZIMUTH, float64(side), &pLat, &pLon, nil)
+
+				e, _, _ := t.ElevationDataset.ElevationAt(pLat, pLon)
+
+				points[i] = Point{x / HEIGHT_DATA_RESOLUTION, (y / HEIGHT_DATA_RESOLUTION) + 1, pLat, pLon, e}
+
+				geodesic.WGS84.Direct(new_lat, new_lon, EAST_AZIMUTH, float64(side), &pLat, &pLon, nil)
+
+				e1, _, _ := t.ElevationDataset.ElevationAt(pLat, pLon)
+
+				points[i+1] = Point{x/HEIGHT_DATA_RESOLUTION + 1, (y / HEIGHT_DATA_RESOLUTION), pLat, pLon, e1}
+			}
 		}
 	}
 
