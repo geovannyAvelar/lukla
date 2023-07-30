@@ -97,3 +97,31 @@ func GetDigitalElevationModelPath() string {
 
 	return "data/dem"
 }
+
+// Returns the username to authenticate on EarthData API
+func GetEarthDataApiUsername() string {
+	username := os.Getenv("LUKLA_EARTHDATA_USERNAME")
+
+	if username != "" {
+		return username
+	}
+
+	log.Warn("LUKLA_EARTHDATA_USERNAME environment variable is not defined." +
+		" Lukla cannot download elevation dataset data.")
+
+	return ""
+}
+
+// Returns the password to authenticate on EarthData API
+func GetEarthDataApiPassword() string {
+	password := os.Getenv("LUKLA_EARTHDATA_PASSWORD")
+
+	if password != "" {
+		return password
+	}
+
+	log.Warn("LUKLA_EARTHDATA_PASSWORD environment variable is not defined." +
+		" Lukla cannot download elevation dataset data.")
+
+	return ""
+}
