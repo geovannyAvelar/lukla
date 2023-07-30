@@ -30,8 +30,8 @@ data/
 data/*.hgt
 heightmap/testdata/dem/*.hgt
 
-# Zip files
-*.zip
-
 # Image files
 *.png
+
+# Dotfiles
+.env

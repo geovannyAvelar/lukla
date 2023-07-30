@@ -8,6 +8,7 @@ require (
 	github.com/apeyroux/gosm v0.0.0-20141123101329-8f3e37d8629e
 	github.com/go-chi/chi v1.5.4
 	github.com/gorilla/handlers v1.5.1
+	github.com/joho/godotenv v1.5.1
 	github.com/mazznoer/colorgrad v0.9.1
 	github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646
 	github.com/sirupsen/logrus v1.9.0
