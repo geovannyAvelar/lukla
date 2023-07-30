@@ -43,6 +43,8 @@ var server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *
 	w.Write(b)
 }))
 
+// TODO This is test is flaky. It's possible to notice that when you run the entire test suite
+// Probably cause by the absence of the zip file, which is not downloaded some times.
 func TestDownloadDemFile(t *testing.T) {
 	t.Parallel()
 
