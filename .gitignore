@@ -35,3 +35,6 @@ heightmap/testdata/dem/*.hgt
 
 # Dotfiles
 .env
+
+# Build folder
+build/
