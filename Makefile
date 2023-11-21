@@ -3,15 +3,15 @@ MAIN_FILE=main.go
 
 build-linux:
 	mkdir -p build
-	GOARCH=amd64 GOOS=linux go build -o ${BUILD_DIR}/osm-cache-linux-64 ${MAIN_FILE}
+	GOARCH=amd64 GOOS=linux go build -o ${BUILD_DIR}/lukla-linux-64 ${MAIN_FILE}
 
 build-darwin:
 	mkdir -p build
-	GOARCH=amd64 GOOS=darwin go build -o ${BUILD_DIR}/osm-cache-darwin-64 ${MAIN_FILE}
+	GOARCH=amd64 GOOS=darwin go build -o ${BUILD_DIR}/lukla-darwin-64 ${MAIN_FILE}
 
 build-windows:
 	mkdir -p build
-	GOARCH=amd64 GOOS=windows go build -o ${BUILD_DIR}/osm-cache-windows-64 ${MAIN_FILE}
+	GOARCH=amd64 GOOS=windows go build -o ${BUILD_DIR}/lukla-windows-64 ${MAIN_FILE}
 
 build:
 	make build-linux
@@ -33,4 +33,4 @@ lint:
 
 clean:
 	go clean
-	rm ${BUILD_DIR}/osm-cache-*
+	rm ${BUILD_DIR}/lukla-*
