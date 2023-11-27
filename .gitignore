@@ -23,6 +23,9 @@ go.work
 # VSCode
 .vscode
 
+# Goland
+.idea
+
 # Data dir
 data/
 
