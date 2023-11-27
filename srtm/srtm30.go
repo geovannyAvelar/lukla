@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	log "github.com/sirupsen/logrus"
 )
@@ -93,7 +94,9 @@ func (d *Srtm30Downloader) downloadZippedDemFile(lat, lon float64) (string, []by
 
 	url := d.BasePath + "/" + filename
 
-	client := &http.Client{}
+	client := &http.Client{
+		Timeout: 15 * time.Second,
+	}
 	req, _ := http.NewRequest("GET", url, nil)
 	req.Header.Add("Authorization", "Bearer "+token.AccessToken)
 
