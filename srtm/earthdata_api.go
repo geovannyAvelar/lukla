@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"encoding/json"
 
@@ -49,7 +50,9 @@ func (a *EarthdataApi) GenerateToken() (EarthDataToken, error) {
 
 	url := a.BaseUrl + "/users/token"
 
-	client := &http.Client{}
+	client := &http.Client{
+		Timeout: 15 * time.Second,
+	}
 	req, _ := http.NewRequest("POST", url, nil)
 	req.SetBasicAuth(a.Username, a.Password)
 
