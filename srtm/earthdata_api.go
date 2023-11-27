@@ -30,10 +30,15 @@ func (a *EarthdataApi) GenerateToken() (EarthDataToken, error) {
 		a.BaseUrl = DEFAULT_EARTHDATA_BASE_URL
 	}
 
-	_, err := a.GetAvailableTokens()
+	tokens, err := a.GetAvailableTokens()
 
 	if err != nil {
-		log.Warnf("Cannot recover available tokens from EarthData API")
+		log.Warnf("Cannot recover available tokens from EarthData API. Cause: %s", err)
+		return EarthDataToken{}, fmt.Errorf("canoot recover tokens from API. Cause: %w", err)
+	}
+
+	if len(tokens) > 0 {
+		return tokens[0], nil
 	}
 
 	token, err := a.getValidToken()
