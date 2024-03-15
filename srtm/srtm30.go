@@ -17,7 +17,7 @@ import (
 )
 
 // SRTM30 dataset base url
-var DEFAULT_SRTM_SERVER_URL = "https://e4ftl01.cr.usgs.gov/DP133/SRTM/SRTMGL1.003/2000.02.11"
+var DEFAULT_SRTM_SERVER_URL = "https://e4ftl01.cr.usgs.gov/MEASURES/SRTMGL1.003/2000.02.11/"
 
 // Path separator
 var FILE_PATH_SEP = strings.ReplaceAll(strconv.QuoteRune(os.PathSeparator), "'", "")
