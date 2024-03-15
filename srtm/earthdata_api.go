@@ -12,7 +12,7 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-const DEFAULT_EARTHDATA_BASE_URL = "https://urs.earthdata.nasa.gov/api"
+const defaultEarthDataBaseUrl = "https://urs.earthdata.nasa.gov/api"
 
 type EarthDataToken struct {
 	AccessToken    string `json:"access_token"`
@@ -28,7 +28,7 @@ type EarthdataApi struct {
 
 func (a *EarthdataApi) GenerateToken() (EarthDataToken, error) {
 	if a.BaseUrl == "" {
-		a.BaseUrl = DEFAULT_EARTHDATA_BASE_URL
+		a.BaseUrl = defaultEarthDataBaseUrl
 	}
 
 	tokens, err := a.GetAvailableTokens()
@@ -88,7 +88,7 @@ func (a *EarthdataApi) GenerateToken() (EarthDataToken, error) {
 
 func (a *EarthdataApi) GetAvailableTokens() ([]EarthDataToken, error) {
 	if a.BaseUrl == "" {
-		a.BaseUrl = DEFAULT_EARTHDATA_BASE_URL
+		a.BaseUrl = defaultEarthDataBaseUrl
 	}
 
 	url := a.BaseUrl + "/users/tokens"

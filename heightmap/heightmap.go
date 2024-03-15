@@ -23,19 +23,19 @@ import (
 )
 
 // Digital Elevation Model (DEM) resolution in meters
-const HEIGHT_DATA_RESOLUTION = 30
+const heightDataResolution = 30
 
 // Azimuth angle pointing to the south
-const SOUTH_AZIMUTH = 180
+const southAzimuth = 180
 
-// Azimtuh angle pointing to the east
-const EAST_AZIMUTH = 90
+// Azimuth angle pointing to the east
+const eastAzimuth = 90
 
 // Path separator
-var FILE_PATH_SEP = strings.ReplaceAll(strconv.QuoteRune(os.PathSeparator), "'", "")
+var filePathSep = strings.ReplaceAll(strconv.QuoteRune(os.PathSeparator), "'", "")
 
 // Tile side in meters for each zoom level in OpenStreetMap (OSM)
-var ZOOM_LEVEL_SIDE = map[int]int{
+var zoomLevelSide = map[int]int{
 	10: 35817,
 	11: 18023,
 	12: 4635,
@@ -44,7 +44,7 @@ var ZOOM_LEVEL_SIDE = map[int]int{
 	15: 292,
 }
 
-// Represents a heightmap in memory
+// Elevation Represents a heightmap in memory
 type Elevation struct {
 	Width     int
 	Height    int
@@ -53,7 +53,7 @@ type Elevation struct {
 	Points    []Point
 }
 
-// Elevation of a specific geographic point represented by latitude and longitude (WGS84)
+// Point Elevation of a specific geographic point represented by latitude and longitude (WGS84)
 // X and Y represents a point in the heightmap image
 type Point struct {
 	X, Y      int
@@ -61,19 +61,19 @@ type Point struct {
 	Elevation int16
 }
 
-// Generate heightmaps based on a digital elevation model (DEM) dataset
+// HeightmapGenerator Generate heightmaps based on a digital elevation model (DEM) dataset
 type HeightmapGenerator struct {
 	ElevationDataset *hgt.DataDir
-	SrtmDownloader   *srtm.Srtm30Downloader
+	SrtmDownloader   *srtm.Downloader
 	Dir              string
 }
 
-type HeightmapResolutionConfig struct {
+type ResolutionConfig struct {
 	Width  int
 	Heigth int
 }
 
-// Generate a heightmap with the same size of an OpenStreetMap (OSM) tile
+// GetTileHeightmap Generate a heightmap with the same size of an OpenStreetMap (OSM) tile
 func (t *HeightmapGenerator) GetTileHeightmap(z, x, y, resolution int) ([]byte, error) {
 	bytes, err := t.getTileFromDisk(x, y, z, resolution)
 
@@ -85,14 +85,14 @@ func (t *HeightmapGenerator) GetTileHeightmap(z, x, y, resolution int) ([]byte, 
 	lat, lon := osmTile.Num2deg()
 
 	tileSide := 0
-	if val, ok := ZOOM_LEVEL_SIDE[z]; ok {
+	if val, ok := zoomLevelSide[z]; ok {
 		tileSide = val
 	} else {
 		return []byte{}, errors.New("invalid zoom level. Minimum zoom level is 10, maximum is 15")
 	}
 
 	bytes, err = t.CreateHeightMapImage(lat, lon, tileSide,
-		HeightmapResolutionConfig{resolution, resolution})
+		ResolutionConfig{resolution, resolution})
 
 	if err != nil {
 		return []byte{}, err
@@ -104,7 +104,7 @@ func (t *HeightmapGenerator) GetTileHeightmap(z, x, y, resolution int) ([]byte, 
 }
 
 func (t *HeightmapGenerator) CreateHeightMapImage(lat, lon float64, side int,
-	conf HeightmapResolutionConfig) ([]byte, error) {
+	conf ResolutionConfig) ([]byte, error) {
 	elevation, err := t.createHeightProfile(lat, lon, side)
 
 	if err != nil {
@@ -145,7 +145,7 @@ func (t *HeightmapGenerator) CreateHeightMapImage(lat, lon float64, side int,
 }
 
 func (t *HeightmapGenerator) createHeightProfile(lat, lon float64, side int) (Elevation, error) {
-	step := int(math.Ceil(float64(side)/float64(HEIGHT_DATA_RESOLUTION))) + 1
+	step := int(math.Ceil(float64(side)/float64(heightDataResolution))) + 1
 
 	points := make([]Point, step*step)
 
@@ -153,14 +153,14 @@ func (t *HeightmapGenerator) createHeightProfile(lat, lon float64, side int) (El
 	var maxHeight int16 = 0
 
 	i := 0
-	for x := 0; x < side; x = x + HEIGHT_DATA_RESOLUTION {
+	for x := 0; x < side; x = x + heightDataResolution {
 		var new_lat float64
 		var new_lon float64
-		geodesic.WGS84.Direct(lat, lon, SOUTH_AZIMUTH, float64(x), &new_lat, &new_lon, nil)
+		geodesic.WGS84.Direct(lat, lon, southAzimuth, float64(x), &new_lat, &new_lon, nil)
 
-		for y := 0; y < side; y = y + HEIGHT_DATA_RESOLUTION {
+		for y := 0; y < side; y = y + heightDataResolution {
 			var pLat, pLon float64
-			geodesic.WGS84.Direct(new_lat, new_lon, EAST_AZIMUTH, float64(y), &pLat, &pLon, nil)
+			geodesic.WGS84.Direct(new_lat, new_lon, eastAzimuth, float64(y), &pLat, &pLon, nil)
 
 			if t.SrtmDownloader != nil {
 				_, err := t.SrtmDownloader.DownloadDemFile(pLat, pLon)
@@ -185,23 +185,23 @@ func (t *HeightmapGenerator) createHeightProfile(lat, lon float64, side int) (El
 				maxHeight = e
 			}
 
-			points[i] = Point{x / HEIGHT_DATA_RESOLUTION, y / HEIGHT_DATA_RESOLUTION, pLat, pLon, e}
+			points[i] = Point{x / heightDataResolution, y / heightDataResolution, pLat, pLon, e}
 
 			i++
 
-			if y == side-(side%HEIGHT_DATA_RESOLUTION) {
+			if y == side-(side%heightDataResolution) {
 				var pLat, pLon float64
-				geodesic.WGS84.Direct(new_lat, new_lon, SOUTH_AZIMUTH, float64(side), &pLat, &pLon, nil)
+				geodesic.WGS84.Direct(new_lat, new_lon, southAzimuth, float64(side), &pLat, &pLon, nil)
 
 				e, _, _ := t.ElevationDataset.ElevationAt(pLat, pLon)
 
-				points[i] = Point{x / HEIGHT_DATA_RESOLUTION, (y / HEIGHT_DATA_RESOLUTION) + 1, pLat, pLon, e}
+				points[i] = Point{x / heightDataResolution, (y / heightDataResolution) + 1, pLat, pLon, e}
 
-				geodesic.WGS84.Direct(new_lat, new_lon, EAST_AZIMUTH, float64(side), &pLat, &pLon, nil)
+				geodesic.WGS84.Direct(new_lat, new_lon, eastAzimuth, float64(side), &pLat, &pLon, nil)
 
 				e1, _, _ := t.ElevationDataset.ElevationAt(pLat, pLon)
 
-				points[i+1] = Point{x/HEIGHT_DATA_RESOLUTION + 1, (y / HEIGHT_DATA_RESOLUTION), pLat, pLon, e1}
+				points[i+1] = Point{x/heightDataResolution + 1, (y / heightDataResolution), pLat, pLon, e1}
 			}
 		}
 	}
@@ -258,7 +258,7 @@ func formatTilePath(dir string, x, y, z, resolution int) string {
 	dir = formatTileDirPath(dir, x, z, resolution)
 	yStr := fmt.Sprintf("%d", y)
 
-	return dir + FILE_PATH_SEP + yStr + ".png"
+	return dir + filePathSep + yStr + ".png"
 }
 
 func formatTileDirPath(dir string, x, z, resolution int) string {
@@ -266,5 +266,5 @@ func formatTileDirPath(dir string, x, z, resolution int) string {
 	xStr := fmt.Sprintf("%d", x)
 	zStr := fmt.Sprintf("%d", z)
 
-	return dir + FILE_PATH_SEP + resStr + FILE_PATH_SEP + zStr + FILE_PATH_SEP + xStr
+	return dir + filePathSep + resStr + filePathSep + zStr + filePathSep + xStr
 }

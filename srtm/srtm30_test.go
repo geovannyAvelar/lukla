@@ -50,7 +50,7 @@ func TestDownloadDemFile(t *testing.T) {
 
 	earthdataApi := EarthdataApi{BaseUrl: server.URL}
 
-	d := Srtm30Downloader{
+	d := Downloader{
 		BasePath: server.URL,
 		Dir:      "testdata/dem",
 		Api:      earthdataApi,
@@ -70,7 +70,7 @@ func TestDownloadZippedDemFile(t *testing.T) {
 
 	earthdataApi := EarthdataApi{BaseUrl: server.URL}
 
-	d := Srtm30Downloader{
+	d := Downloader{
 		BasePath: server.URL,
 		Dir:      "testdata/dem",
 		Api:      earthdataApi,
@@ -98,7 +98,7 @@ func TestDownloadZippedDemFile(t *testing.T) {
 func TestUnzip(t *testing.T) {
 	t.Parallel()
 
-	d := Srtm30Downloader{}
+	d := Downloader{}
 
 	files, err := d.unzip("testdata/files.zip", "testdata")
 

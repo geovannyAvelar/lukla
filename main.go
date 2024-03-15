@@ -28,7 +28,7 @@ func main() {
 
 	defer h.Close()
 
-	srtmDownloader := &srtm.Srtm30Downloader{
+	srtmDownloader := &srtm.Downloader{
 		Dir: internal.GetDigitalElevationModelPath(),
 		Api: srtm.EarthdataApi{Username: internal.GetEarthDataApiUsername(),
 			Password: internal.GetEarthDataApiPassword()},
