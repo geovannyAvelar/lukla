@@ -8,13 +8,13 @@ import (
 	"github.com/petoc/hgt"
 )
 
-const DEM_DATASET_DIR = "testdata/dem"
-const TILES_DIR = "./testdata/tiles"
+const demDatasetDir = "testdata/dem"
+const tilesDir = "./testdata/tiles"
 
 func TestCreateHeightProfile(t *testing.T) {
 	t.Parallel()
 
-	h, err := hgt.OpenDataDir(DEM_DATASET_DIR, nil)
+	h, err := hgt.OpenDataDir(demDatasetDir, nil)
 
 	if err != nil {
 		panic(err)
@@ -24,7 +24,7 @@ func TestCreateHeightProfile(t *testing.T) {
 
 	heightmapGen := HeightmapGenerator{
 		ElevationDataset: h,
-		Dir:              TILES_DIR,
+		Dir:              tilesDir,
 	}
 
 	_, err = heightmapGen.createHeightProfile(27.687397, 86.731814, 2251)
@@ -38,7 +38,7 @@ func TestSaveTile(t *testing.T) {
 	t.Parallel()
 
 	heightmapGen := HeightmapGenerator{
-		Dir: TILES_DIR,
+		Dir: tilesDir,
 	}
 
 	path, err := heightmapGen.saveTile(1, 1, 1, 256, []byte{0})
@@ -57,7 +57,7 @@ func TestSaveTile(t *testing.T) {
 func TestGetTileFromDisk(t *testing.T) {
 	t.Parallel()
 
-	tilePath := TILES_DIR + "/256/0/0/0.png"
+	tilePath := tilesDir + "/256/0/0/0.png"
 	err := os.WriteFile(tilePath, []byte{0}, 0700)
 
 	if err != nil {
@@ -66,7 +66,7 @@ func TestGetTileFromDisk(t *testing.T) {
 	}
 
 	heightmapGen := HeightmapGenerator{
-		Dir: TILES_DIR,
+		Dir: tilesDir,
 	}
 
 	b, err := heightmapGen.getTileFromDisk(0, 0, 0, 256)
@@ -85,8 +85,8 @@ func TestGetTileFromDisk(t *testing.T) {
 func TestFormatTilePath(t *testing.T) {
 	t.Parallel()
 
-	expected := TILES_DIR + "/256/0/0/0.png"
-	path := formatTilePath(TILES_DIR, 0, 0, 0, 256)
+	expected := tilesDir + "/256/0/0/0.png"
+	path := formatTilePath(tilesDir, 0, 0, 0, 256)
 
 	if path != expected {
 		t.Errorf("expected %s but received %s", expected, path)

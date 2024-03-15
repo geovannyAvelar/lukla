@@ -78,7 +78,7 @@ func (a *HttpApi) handleSquare(w http.ResponseWriter, r *http.Request) {
 	}
 
 	b, err := a.HeightmapGen.CreateHeightMapImage(lat, lon, side,
-		heightmap.HeightmapResolutionConfig{Width: res, Heigth: res})
+		heightmap.ResolutionConfig{Width: res, Heigth: res})
 
 	if err != nil {
 		http.Error(w, "cannot generate heightmap. "+err.Error(), http.StatusBadRequest)

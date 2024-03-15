@@ -17,20 +17,20 @@ import (
 )
 
 // SRTM30 dataset base url
-var DEFAULT_SRTM_SERVER_URL = "https://e4ftl01.cr.usgs.gov/MEASURES/SRTMGL1.003/2000.02.11/"
+var defaultSRTMServerURL = "https://e4ftl01.cr.usgs.gov/MEASURES/SRTMGL1.003/2000.02.11/"
 
 // Path separator
-var FILE_PATH_SEP = strings.ReplaceAll(strconv.QuoteRune(os.PathSeparator), "'", "")
+var filePathSep = strings.ReplaceAll(strconv.QuoteRune(os.PathSeparator), "'", "")
 
-type Srtm30Downloader struct {
+type Downloader struct {
 	BasePath string
 	Dir      string
 	Api      EarthdataApi
 }
 
-func (d *Srtm30Downloader) DownloadDemFile(pLat, pLon float64) (string, error) {
+func (d *Downloader) DownloadDemFile(pLat, pLon float64) (string, error) {
 	filename := generateZipDemFileName(pLat, pLon)
-	zipFilepath := d.Dir + FILE_PATH_SEP + filename
+	zipFilepath := d.Dir + filePathSep + filename
 
 	demFilePath := strings.ReplaceAll(zipFilepath, ".zip", "")
 	demFilePath = strings.ReplaceAll(demFilePath, ".SRTMGL1", "")
@@ -68,13 +68,13 @@ func (d *Srtm30Downloader) DownloadDemFile(pLat, pLon float64) (string, error) {
 	return demFilePath, nil
 }
 
-func (d *Srtm30Downloader) downloadZippedDemFile(lat, lon float64) (string, []byte, error) {
+func (d *Downloader) downloadZippedDemFile(lat, lon float64) (string, []byte, error) {
 	if d.BasePath == "" {
-		d.BasePath = DEFAULT_SRTM_SERVER_URL
+		d.BasePath = defaultSRTMServerURL
 	}
 
 	filename := generateZipDemFileName(lat, lon)
-	filepath := d.Dir + FILE_PATH_SEP + filename
+	filepath := d.Dir + filePathSep + filename
 
 	if d.checkIfDemFileExists(filepath) {
 		b, err := os.ReadFile(filepath)
@@ -132,7 +132,7 @@ func (d *Srtm30Downloader) downloadZippedDemFile(lat, lon float64) (string, []by
 	return filepath, b, nil
 }
 
-func (d *Srtm30Downloader) saveZipHgtFile(path string, bytes []byte) error {
+func (d *Downloader) saveZipHgtFile(path string, bytes []byte) error {
 	if d.checkIfDemFileExists(path) {
 		return nil
 	}
@@ -148,7 +148,7 @@ func (d *Srtm30Downloader) saveZipHgtFile(path string, bytes []byte) error {
 	return nil
 }
 
-func (d *Srtm30Downloader) checkIfDemFileExists(path string) bool {
+func (d *Downloader) checkIfDemFileExists(path string) bool {
 	if _, err := os.Stat(path); err == nil {
 		return true
 	}
@@ -156,7 +156,7 @@ func (d *Srtm30Downloader) checkIfDemFileExists(path string) bool {
 	return false
 }
 
-func (d *Srtm30Downloader) unzip(zipFile string, destFolder string) ([]string, error) {
+func (d *Downloader) unzip(zipFile string, destFolder string) ([]string, error) {
 	files := []string{}
 
 	r, err := zip.OpenReader(zipFile)
