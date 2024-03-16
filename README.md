@@ -37,6 +37,6 @@ This is a pretty simple project and it might be improved.
 - Dockerize the app;
 - Capability to create a heightmap based on a bounding box (instead of just use OSM tiles);
 - Support to different zoom levels when creating OSM tiles (lower zoom levels must use bigger DEM resolutions in order to maintain a good perfomance). Now, Lukla just support zoom levels bigger than 10;
-- Create a way to download SRTM30m files from NASA server;
+- ~~Create a way to download SRTM30m files from NASA server;~~ (**Implemented**)
 - Support to different image extensions (e.g.: maybe TIFF), instead of just PNG files;
 - An option to cache tiles in AWS S3 (or other cloud storages).
