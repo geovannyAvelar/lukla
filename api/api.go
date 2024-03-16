@@ -15,9 +15,14 @@ import (
 
 type HttpApi struct {
 	Router         *chi.Mux
-	HeightmapGen   heightmap.HeightmapGenerator
+	HeightmapGen   HeightMapGenerator
 	BasePath       string
 	AllowedOrigins []string
+}
+
+type HeightMapGenerator interface {
+	GetTileHeightmap(z, x, y, resolution int) ([]byte, error)
+	CreateHeightMapImage(lat, lon float64, side int, conf heightmap.ResolutionConfig) ([]byte, error)
 }
 
 func (a *HttpApi) Run(port int) error {
@@ -78,7 +83,7 @@ func (a *HttpApi) handleSquare(w http.ResponseWriter, r *http.Request) {
 	}
 
 	b, err := a.HeightmapGen.CreateHeightMapImage(lat, lon, side,
-		heightmap.ResolutionConfig{Width: res, Heigth: res})
+		heightmap.ResolutionConfig{Width: res, Height: res})
 
 	if err != nil {
 		http.Error(w, "cannot generate heightmap. "+err.Error(), http.StatusBadRequest)

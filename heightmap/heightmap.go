@@ -61,8 +61,8 @@ type Point struct {
 	Elevation int16
 }
 
-// HeightmapGenerator Generate heightmaps based on a digital elevation model (DEM) dataset
-type HeightmapGenerator struct {
+// Generator HeightmapGenerator Generate heightmaps based on a digital elevation model (DEM) dataset
+type Generator struct {
 	ElevationDataset *hgt.DataDir
 	SrtmDownloader   *srtm.Downloader
 	Dir              string
@@ -70,11 +70,11 @@ type HeightmapGenerator struct {
 
 type ResolutionConfig struct {
 	Width  int
-	Heigth int
+	Height int
 }
 
 // GetTileHeightmap Generate a heightmap with the same size of an OpenStreetMap (OSM) tile
-func (t *HeightmapGenerator) GetTileHeightmap(z, x, y, resolution int) ([]byte, error) {
+func (t *Generator) GetTileHeightmap(z, x, y, resolution int) ([]byte, error) {
 	bytes, err := t.getTileFromDisk(x, y, z, resolution)
 
 	if err == nil {
@@ -103,7 +103,7 @@ func (t *HeightmapGenerator) GetTileHeightmap(z, x, y, resolution int) ([]byte, 
 	return bytes, nil
 }
 
-func (t *HeightmapGenerator) CreateHeightMapImage(lat, lon float64, side int,
+func (t *Generator) CreateHeightMapImage(lat, lon float64, side int,
 	conf ResolutionConfig) ([]byte, error) {
 	elevation, err := t.createHeightProfile(lat, lon, side)
 
@@ -126,8 +126,8 @@ func (t *HeightmapGenerator) CreateHeightMapImage(lat, lon float64, side int,
 	var b bytes.Buffer
 	writer := bufio.NewWriter(&b)
 
-	if conf.Heigth > 0 && conf.Width > 0 {
-		resizedImg := resize.Resize(uint(conf.Width), uint(conf.Heigth), imgRgba, resize.Lanczos3)
+	if conf.Height > 0 && conf.Width > 0 {
+		resizedImg := resize.Resize(uint(conf.Width), uint(conf.Height), imgRgba, resize.Lanczos3)
 		err := png.Encode(writer, resizedImg)
 
 		if err != nil {
@@ -144,7 +144,7 @@ func (t *HeightmapGenerator) CreateHeightMapImage(lat, lon float64, side int,
 	return b.Bytes(), nil
 }
 
-func (t *HeightmapGenerator) createHeightProfile(lat, lon float64, side int) (Elevation, error) {
+func (t *Generator) createHeightProfile(lat, lon float64, side int) (Elevation, error) {
 	step := int(math.Ceil(float64(side)/float64(heightDataResolution))) + 1
 
 	points := make([]Point, step*step)
@@ -215,7 +215,7 @@ func (t *HeightmapGenerator) createHeightProfile(lat, lon float64, side int) (El
 	}, nil
 }
 
-func (t *HeightmapGenerator) saveTile(x int, y int, z, resolution int, bytes []byte) (string, error) {
+func (t *Generator) saveTile(x int, y int, z, resolution int, bytes []byte) (string, error) {
 	dir := formatTileDirPath(t.Dir, x, z, resolution)
 	err := os.MkdirAll(dir, os.ModePerm)
 
@@ -238,7 +238,7 @@ func (t *HeightmapGenerator) saveTile(x int, y int, z, resolution int, bytes []b
 	return filepath, nil
 }
 
-func (t *HeightmapGenerator) getTileFromDisk(x, y, z, resolution int) ([]byte, error) {
+func (t *Generator) getTileFromDisk(x, y, z, resolution int) ([]byte, error) {
 	path := formatTilePath(t.Dir, x, y, z, resolution)
 
 	if _, err := os.Stat(path); err != nil {
