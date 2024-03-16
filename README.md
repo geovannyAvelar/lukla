@@ -11,7 +11,7 @@ This program is pretty incomplete yet. I need to write unit tests and add some f
 
 First, you need SRTM30 digital elevation model data files in order to create heightmap tiles. 
 This dataset is huge, so it is impossible to host those files in this repository. This program will download
-the HGT files and put them in ./data/dem folder (you can change this directory using enviroment variables). 
+the HGT files and put them in ./data/dem folder (you can change this directory using environment variables). 
 You can also download them using [this tool](https://dwtkns.com/srtm30m/). 
 Remember you need to create a NASA Earthdata account. You can register [here](https://urs.earthdata.nasa.gov/users/new), it's free.
 
@@ -24,7 +24,7 @@ You can use Make to compile. Just use one of the following commands to compile t
 - ```make build-darwin``` (MacOS)
 
 ## Environment variables
-None of the following variables are mandatory, but you will probably need some of them to correctly set-up the API.
+None of the following variables are mandatory, but you will probably need some of them to correctly set up the API.
 
 * **LUKLA_ALLOWED_ORIGINS**: API allowed origins, separated by commas (,). If not defined, default is *http://localhost:PORT*;
 * **LUKLA_PORT**: API HTTP port. Default is *9000*;
