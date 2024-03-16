@@ -34,7 +34,7 @@ func main() {
 			Password: internal.GetEarthDataApiPassword()},
 	}
 
-	heightmapGen := heightmap.HeightmapGenerator{
+	heightmapGen := &heightmap.Generator{
 		ElevationDataset: h,
 		SrtmDownloader:   srtmDownloader,
 		Dir:              internal.GetTilesPath(),

@@ -22,7 +22,7 @@ func TestCreateHeightProfile(t *testing.T) {
 
 	defer h.Close()
 
-	heightmapGen := HeightmapGenerator{
+	heightmapGen := Generator{
 		ElevationDataset: h,
 		Dir:              tilesDir,
 	}
@@ -37,7 +37,7 @@ func TestCreateHeightProfile(t *testing.T) {
 func TestSaveTile(t *testing.T) {
 	t.Parallel()
 
-	heightmapGen := HeightmapGenerator{
+	heightmapGen := Generator{
 		Dir: tilesDir,
 	}
 
@@ -65,7 +65,7 @@ func TestGetTileFromDisk(t *testing.T) {
 		return
 	}
 
-	heightmapGen := HeightmapGenerator{
+	heightmapGen := Generator{
 		Dir: tilesDir,
 	}
 
