@@ -1,5 +1,7 @@
 # Lukla
-Lukla is an API to create real world heightmaps based on [Shuttle Radar Topography Mission (SRTM30m)](https://en.wikipedia.org/wiki/Shuttle_Radar_Topography_Mission) digital elevation model. 
+Lukla is an API to create real world heightmaps based on 
+[Shuttle Radar Topography Mission (SRTM30m)](https://en.wikipedia.org/wiki/Shuttle_Radar_Topography_Mission) 
+digital elevation model. 
 
 This program is pretty incomplete yet. I need to write unit tests and add some features.
 
@@ -8,8 +10,9 @@ This program is pretty incomplete yet. I need to write unit tests and add some f
 ## Build instructions
 
 First, you need SRTM30 digital elevation model data files in order to create heightmap tiles. 
-This dataset is huge, so it is impossible to host those files in this repository. You need to download
-the HGT files and put them in ./data/dem folder (you can change this directory using enviroment variables). You can download them using [this tool](https://dwtkns.com/srtm30m/).
+This dataset is huge, so it is impossible to host those files in this repository. This program will download
+the HGT files and put them in ./data/dem folder (you can change this directory using enviroment variables). 
+You can also download them using [this tool](https://dwtkns.com/srtm30m/). 
 Remember you need to create a NASA Earthdata account. You can register [here](https://urs.earthdata.nasa.gov/users/new), it's free.
 
 ### With Make
@@ -31,7 +34,7 @@ None of the following variables are mandatory, but you will probably need some o
 
 ## Roadmap
 
-This is a pretty simple project and it might be improved.
+This is a pretty simple project, and it might be improved.
 
 - Write unit tests and improve the code testability;
 - Dockerize the app;
