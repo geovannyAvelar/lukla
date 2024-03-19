@@ -128,7 +128,7 @@ func GetEarthDataApiPassword() string {
 }
 
 // GetHttpClientTimeout Returns a time.Duration representing the timeout to HTTP Client requests.
-// Default is ten seconds
+// Default is 60 seconds
 func GetHttpClientTimeout() time.Duration {
 	timemoutStr := os.Getenv("LUKLA_HTTP_CLIENT_TIMEOUT")
 
