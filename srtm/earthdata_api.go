@@ -1,13 +1,11 @@
 package srtm
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"time"
-
-	"encoding/json"
 
 	log "github.com/sirupsen/logrus"
 )
@@ -20,10 +18,11 @@ type EarthDataToken struct {
 }
 
 type EarthdataApi struct {
-	BaseUrl  string
-	Username string
-	Password string
-	tokens   []EarthDataToken
+	BaseUrl    string
+	Username   string
+	Password   string
+	HttpClient *http.Client
+	tokens     []EarthDataToken
 }
 
 func (a *EarthdataApi) GenerateToken() (EarthDataToken, error) {
@@ -50,13 +49,10 @@ func (a *EarthdataApi) GenerateToken() (EarthDataToken, error) {
 
 	url := a.BaseUrl + "/users/token"
 
-	client := &http.Client{
-		Timeout: 15 * time.Second,
-	}
 	req, _ := http.NewRequest("POST", url, nil)
 	req.SetBasicAuth(a.Username, a.Password)
 
-	resp, err := client.Do(req)
+	resp, err := a.HttpClient.Do(req)
 
 	if err != nil {
 		err := fmt.Errorf("cannot issue an EarthData token. Cause: %w", err)
@@ -93,11 +89,10 @@ func (a *EarthdataApi) GetAvailableTokens() ([]EarthDataToken, error) {
 
 	url := a.BaseUrl + "/users/tokens"
 
-	client := &http.Client{}
 	req, _ := http.NewRequest("GET", url, nil)
 	req.SetBasicAuth(a.Username, a.Password)
 
-	resp, err := client.Do(req)
+	resp, err := a.HttpClient.Do(req)
 
 	if err != nil {
 		err := fmt.Errorf("cannot recover EarthData tokens. Cause: %w", err)

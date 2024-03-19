@@ -30,7 +30,8 @@ None of the following variables are mandatory, but you will probably need some o
 * **LUKLA_PORT**: API HTTP port. Default is *9000*;
 * **LUKLA_BASE_PATH**: API base path. Default is */*;
 * **LUKLA_TILES_PATH**: Directory where generated heightmap images are cached. Default is *./data/tiles*;
-* **LUKLA_DEM_FILES_PATH**: Directory where SRTM30 Digital elevation model .hgt files are stored. Default is *./data/dem*.
+* **LUKLA_DEM_FILES_PATH**: Directory where SRTM30 Digital elevation model .hgt files are stored. Default is *./data/dem*;
+* **LUKLA_HTTP_CLIENT_TIMEOUT**: Timeout in seconds for http.Client requests. Default is *60* seconds. Must be an integer.
 
 ## Roadmap
 

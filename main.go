@@ -9,6 +9,7 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/petoc/hgt"
 	log "github.com/sirupsen/logrus"
+	"net/http"
 )
 
 func main() {
@@ -28,10 +29,20 @@ func main() {
 
 	defer h.Close()
 
+	httpClient := &http.Client{
+		Timeout: internal.GetHttpClientTimeout(),
+	}
+
+	earthdataApi := srtm.EarthdataApi{
+		HttpClient: httpClient,
+		Username:   internal.GetEarthDataApiUsername(),
+		Password:   internal.GetEarthDataApiPassword(),
+	}
+
 	srtmDownloader := &srtm.Downloader{
-		Dir: internal.GetDigitalElevationModelPath(),
-		Api: srtm.EarthdataApi{Username: internal.GetEarthDataApiUsername(),
-			Password: internal.GetEarthDataApiPassword()},
+		HttpClient: httpClient,
+		Dir:        internal.GetDigitalElevationModelPath(),
+		Api:        earthdataApi,
 	}
 
 	heightmapGen := &heightmap.Generator{
