@@ -11,6 +11,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -140,10 +141,21 @@ func createHeightmapGenerator(h *hgt.DataDir, downloader *srtm.Downloader) *heig
 }
 
 func createHttpApi(heightmapGen *heightmap.Generator) *api.HttpApi {
+	if basePath == "" {
+		basePath = internal.GetRootPath()
+	}
+
+	var allowedOriginsSlice []string
+	if allowedOrigins == "" {
+		allowedOriginsSlice = internal.GetAllowedOrigins()
+	} else {
+		allowedOriginsSlice = strings.Split(allowedOrigins, ",")
+	}
+
 	return &api.HttpApi{
 		Router:         chi.NewRouter(),
 		HeightmapGen:   heightmapGen,
-		BasePath:       internal.GetRootPath(),
-		AllowedOrigins: internal.GetAllowedOrigins(),
+		BasePath:       basePath,
+		AllowedOrigins: allowedOriginsSlice,
 	}
 }
