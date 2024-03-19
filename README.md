@@ -44,4 +44,4 @@ This is a pretty simple project, and it might be improved.
 - ~~Create a way to download SRTM30m files from NASA server;~~ (**Implemented**)
 - Support to different image extensions (e.g.: maybe TIFF), instead of just PNG files;
 - An option to cache tiles in AWS S3 (or other cloud storages);
-- A CLI interface.
+- A CLI interface allowing heightmaps creation without API.
