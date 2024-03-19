@@ -5,6 +5,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	log "github.com/sirupsen/logrus"
 )
@@ -124,4 +125,22 @@ func GetEarthDataApiPassword() string {
 		" Lukla cannot download elevation dataset data.")
 
 	return ""
+}
+
+// GetHttpClientTimeout Returns a time.Duration representing the timeout to HTTP Client requests.
+// Default is ten seconds
+func GetHttpClientTimeout() time.Duration {
+	timemoutStr := os.Getenv("LUKLA_HTTP_CLIENT_TIMEOUT")
+
+	if timemoutStr != "" {
+		timeout, err := strconv.Atoi(timemoutStr)
+
+		if err == nil {
+			return time.Duration(timeout) * time.Second
+		}
+
+		log.Warn("Cannot parse LUKLA_PORT enviroment variable. Port must be an integer.")
+	}
+
+	return 60 * time.Second
 }

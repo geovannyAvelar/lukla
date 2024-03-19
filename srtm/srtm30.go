@@ -23,9 +23,10 @@ var defaultSRTMServerURL = "https://e4ftl01.cr.usgs.gov/MEASURES/SRTMGL1.003/200
 var filePathSep = strings.ReplaceAll(strconv.QuoteRune(os.PathSeparator), "'", "")
 
 type Downloader struct {
-	BasePath string
-	Dir      string
-	Api      EarthdataApi
+	BasePath   string
+	Dir        string
+	HttpClient *http.Client
+	Api        EarthdataApi
 }
 
 func (d *Downloader) DownloadDemFile(pLat, pLon float64) (string, error) {
@@ -95,7 +96,7 @@ func (d *Downloader) downloadZippedDemFile(lat, lon float64) (string, []byte, er
 	url := d.BasePath + "/" + filename
 
 	client := &http.Client{
-		Timeout: 15 * time.Second,
+		Timeout: 60 * time.Second,
 	}
 	req, _ := http.NewRequest("GET", url, nil)
 	req.Header.Add("Authorization", "Bearer "+token.AccessToken)

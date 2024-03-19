@@ -32,7 +32,7 @@ var earthdataServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWr
 func TestGenerateToken(t *testing.T) {
 	t.Parallel()
 
-	earthdataApi := EarthdataApi{BaseUrl: earthdataServer.URL}
+	earthdataApi := EarthdataApi{BaseUrl: earthdataServer.URL, HttpClient: http.DefaultClient}
 
 	_, err := earthdataApi.GenerateToken()
 
