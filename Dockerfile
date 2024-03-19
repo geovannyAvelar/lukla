@@ -10,7 +10,7 @@ COPY go.sum ./
 
 RUN go mod download
 
-COPY internal/ internal/
+COPY env/ internal/
 COPY *.go ./
 
 RUN go build -o lukla main.go

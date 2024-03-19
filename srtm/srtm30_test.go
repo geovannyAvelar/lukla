@@ -48,7 +48,7 @@ var server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *
 func TestDownloadDemFile(t *testing.T) {
 	t.Parallel()
 
-	earthdataApi := EarthdataApi{BaseUrl: server.URL, HttpClient: http.DefaultClient}
+	earthdataApi := &EarthdataApi{BaseUrl: server.URL, HttpClient: http.DefaultClient}
 
 	d := Downloader{
 		BasePath:   server.URL,
@@ -69,7 +69,7 @@ func TestDownloadDemFile(t *testing.T) {
 func TestDownloadZippedDemFile(t *testing.T) {
 	t.Parallel()
 
-	earthdataApi := EarthdataApi{BaseUrl: server.URL, HttpClient: http.DefaultClient}
+	earthdataApi := &EarthdataApi{BaseUrl: server.URL, HttpClient: http.DefaultClient}
 
 	d := Downloader{
 		BasePath:   server.URL,

@@ -2,8 +2,8 @@ package cmd
 
 import (
 	"github.com/geovannyAvelar/lukla/api"
+	"github.com/geovannyAvelar/lukla/env"
 	"github.com/geovannyAvelar/lukla/heightmap"
-	"github.com/geovannyAvelar/lukla/internal"
 	"github.com/geovannyAvelar/lukla/srtm"
 	"github.com/go-chi/chi"
 	"github.com/joho/godotenv"
