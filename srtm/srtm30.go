@@ -26,7 +26,7 @@ type Downloader struct {
 	BasePath   string
 	Dir        string
 	HttpClient *http.Client
-	Api        EarthdataApi
+	Api        *EarthdataApi
 }
 
 func (d Downloader) DownloadDemFile(pLat, pLon float64) (string, error) {
