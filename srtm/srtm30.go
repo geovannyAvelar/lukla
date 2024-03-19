@@ -29,7 +29,7 @@ type Downloader struct {
 	Api        EarthdataApi
 }
 
-func (d *Downloader) DownloadDemFile(pLat, pLon float64) (string, error) {
+func (d Downloader) DownloadDemFile(pLat, pLon float64) (string, error) {
 	filename := generateZipDemFileName(pLat, pLon)
 	zipFilepath := d.Dir + filePathSep + filename
 
@@ -69,7 +69,7 @@ func (d *Downloader) DownloadDemFile(pLat, pLon float64) (string, error) {
 	return demFilePath, nil
 }
 
-func (d *Downloader) downloadZippedDemFile(lat, lon float64) (string, []byte, error) {
+func (d Downloader) downloadZippedDemFile(lat, lon float64) (string, []byte, error) {
 	if d.BasePath == "" {
 		d.BasePath = defaultSRTMServerURL
 	}
@@ -133,7 +133,7 @@ func (d *Downloader) downloadZippedDemFile(lat, lon float64) (string, []byte, er
 	return filepath, b, nil
 }
 
-func (d *Downloader) saveZipHgtFile(path string, bytes []byte) error {
+func (d Downloader) saveZipHgtFile(path string, bytes []byte) error {
 	if d.checkIfDemFileExists(path) {
 		return nil
 	}
@@ -149,7 +149,7 @@ func (d *Downloader) saveZipHgtFile(path string, bytes []byte) error {
 	return nil
 }
 
-func (d *Downloader) checkIfDemFileExists(path string) bool {
+func (d Downloader) checkIfDemFileExists(path string) bool {
 	if _, err := os.Stat(path); err == nil {
 		return true
 	}
@@ -157,7 +157,7 @@ func (d *Downloader) checkIfDemFileExists(path string) bool {
 	return false
 }
 
-func (d *Downloader) unzip(zipFile string, destFolder string) ([]string, error) {
+func (d Downloader) unzip(zipFile string, destFolder string) ([]string, error) {
 	files := []string{}
 
 	r, err := zip.OpenReader(zipFile)
