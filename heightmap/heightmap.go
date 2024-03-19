@@ -74,7 +74,7 @@ type ResolutionConfig struct {
 }
 
 // GetTileHeightmap Generate a heightmap with the same size of an OpenStreetMap (OSM) tile
-func (t *Generator) GetTileHeightmap(z, x, y, resolution int) ([]byte, error) {
+func (t Generator) GetTileHeightmap(z, x, y, resolution int) ([]byte, error) {
 	bytes, err := t.getTileFromDisk(x, y, z, resolution)
 
 	if err == nil {
@@ -103,7 +103,7 @@ func (t *Generator) GetTileHeightmap(z, x, y, resolution int) ([]byte, error) {
 	return bytes, nil
 }
 
-func (t *Generator) CreateHeightMapImage(lat, lon float64, side int,
+func (t Generator) CreateHeightMapImage(lat, lon float64, side int,
 	conf ResolutionConfig) ([]byte, error) {
 	elevation, err := t.createHeightProfile(lat, lon, side)
 
@@ -144,7 +144,7 @@ func (t *Generator) CreateHeightMapImage(lat, lon float64, side int,
 	return b.Bytes(), nil
 }
 
-func (t *Generator) createHeightProfile(lat, lon float64, side int) (Elevation, error) {
+func (t Generator) createHeightProfile(lat, lon float64, side int) (Elevation, error) {
 	step := int(math.Ceil(float64(side)/float64(heightDataResolution))) + 1
 
 	points := make([]Point, step*step)
@@ -215,7 +215,7 @@ func (t *Generator) createHeightProfile(lat, lon float64, side int) (Elevation, 
 	}, nil
 }
 
-func (t *Generator) saveTile(x int, y int, z, resolution int, bytes []byte) (string, error) {
+func (t Generator) saveTile(x int, y int, z, resolution int, bytes []byte) (string, error) {
 	dir := formatTileDirPath(t.Dir, x, z, resolution)
 	err := os.MkdirAll(dir, os.ModePerm)
 
@@ -238,7 +238,7 @@ func (t *Generator) saveTile(x int, y int, z, resolution int, bytes []byte) (str
 	return filepath, nil
 }
 
-func (t *Generator) getTileFromDisk(x, y, z, resolution int) ([]byte, error) {
+func (t Generator) getTileFromDisk(x, y, z, resolution int) ([]byte, error) {
 	path := formatTilePath(t.Dir, x, y, z, resolution)
 
 	if _, err := os.Stat(path); err != nil {

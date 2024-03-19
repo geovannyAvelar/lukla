@@ -25,7 +25,7 @@ type EarthdataApi struct {
 	tokens     []EarthDataToken
 }
 
-func (a *EarthdataApi) GenerateToken() (EarthDataToken, error) {
+func (a EarthdataApi) GenerateToken() (EarthDataToken, error) {
 	if a.BaseUrl == "" {
 		a.BaseUrl = defaultEarthDataBaseUrl
 	}
@@ -82,7 +82,7 @@ func (a *EarthdataApi) GenerateToken() (EarthDataToken, error) {
 	return token, nil
 }
 
-func (a *EarthdataApi) GetAvailableTokens() ([]EarthDataToken, error) {
+func (a EarthdataApi) GetAvailableTokens() ([]EarthDataToken, error) {
 	if a.BaseUrl == "" {
 		a.BaseUrl = defaultEarthDataBaseUrl
 	}
@@ -124,7 +124,7 @@ func (a *EarthdataApi) GetAvailableTokens() ([]EarthDataToken, error) {
 	return tokens, nil
 }
 
-func (a *EarthdataApi) getValidToken() (EarthDataToken, error) {
+func (a EarthdataApi) getValidToken() (EarthDataToken, error) {
 	for _, t := range a.tokens {
 		if t.isValid() {
 			return t, nil

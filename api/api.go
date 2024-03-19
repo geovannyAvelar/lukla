@@ -25,7 +25,7 @@ type HeightMapGenerator interface {
 	CreateHeightMapImage(lat, lon float64, side int, conf heightmap.ResolutionConfig) ([]byte, error)
 }
 
-func (a *HttpApi) Run(port int) error {
+func (a HttpApi) Run(port int) error {
 	if port < 0 || port > 65535 {
 		return errors.New("invalid HTTP port")
 	}
@@ -48,7 +48,7 @@ func (a *HttpApi) Run(port int) error {
 	return http.ListenAndServe(host, handler)
 }
 
-func (a *HttpApi) handleTile(w http.ResponseWriter, r *http.Request) {
+func (a HttpApi) handleTile(w http.ResponseWriter, r *http.Request) {
 	tileCoords, err := a.parseTileCoordinates(r)
 	resolution := a.parseTileResolution(r)
 
@@ -72,7 +72,7 @@ func (a *HttpApi) handleTile(w http.ResponseWriter, r *http.Request) {
 	w.Write(bytes)
 }
 
-func (a *HttpApi) handleSquare(w http.ResponseWriter, r *http.Request) {
+func (a HttpApi) handleSquare(w http.ResponseWriter, r *http.Request) {
 	lat, lon, err := a.parseSquareCoordinates(r)
 	side := a.parseSquareSide(r)
 	res := a.parseSquareResolution(r)
@@ -95,7 +95,7 @@ func (a *HttpApi) handleSquare(w http.ResponseWriter, r *http.Request) {
 	w.Write(b)
 }
 
-func (a *HttpApi) parseTileCoordinates(r *http.Request) (map[string]int, error) {
+func (a HttpApi) parseTileCoordinates(r *http.Request) (map[string]int, error) {
 	xParam := chi.URLParam(r, "x")
 	yParam := chi.URLParam(r, "y")
 	zParam := chi.URLParam(r, "z")
@@ -113,7 +113,7 @@ func (a *HttpApi) parseTileCoordinates(r *http.Request) (map[string]int, error) 
 	}, nil
 }
 
-func (a *HttpApi) parseTileResolution(r *http.Request) int {
+func (a HttpApi) parseTileResolution(r *http.Request) int {
 	resParam := chi.URLParam(r, "resolution")
 	resolution, errResParse := strconv.Atoi(resParam)
 
@@ -124,7 +124,7 @@ func (a *HttpApi) parseTileResolution(r *http.Request) int {
 	return resolution
 }
 
-func (a *HttpApi) parseSquareCoordinates(r *http.Request) (float64, float64, error) {
+func (a HttpApi) parseSquareCoordinates(r *http.Request) (float64, float64, error) {
 	latParam := r.URL.Query().Get("lat")
 	lonParam := r.URL.Query().Get("lon")
 
@@ -138,7 +138,7 @@ func (a *HttpApi) parseSquareCoordinates(r *http.Request) (float64, float64, err
 	return lat, lon, nil
 }
 
-func (a *HttpApi) parseSquareSide(r *http.Request) int {
+func (a HttpApi) parseSquareSide(r *http.Request) int {
 	sideParam := r.URL.Query().Get("side")
 	side, err := strconv.Atoi(sideParam)
 
@@ -153,7 +153,7 @@ func (a *HttpApi) parseSquareSide(r *http.Request) int {
 	return side
 }
 
-func (a *HttpApi) parseSquareResolution(r *http.Request) int {
+func (a HttpApi) parseSquareResolution(r *http.Request) int {
 	resParam := r.URL.Query().Get("resolution")
 	res, err := strconv.Atoi(resParam)
 
