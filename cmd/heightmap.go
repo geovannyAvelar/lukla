@@ -25,6 +25,7 @@ func CreateHeightMapCommand() *cobra.Command {
 	heightmap.Flags().Float64("longitude", 0.0, "Square initial longitude")
 	heightmap.Flags().Int("side", 1000, "Side of the square in meters")
 	heightmap.Flags().Int("resolution", 256, "PNG image resolution")
+	heightmap.Flags().Bool("interpolate", false, "Apply image resizing even when original image resolution is smaller than informed resolution")
 	heightmap.Flags().StringP("output", "o", "heightmap.png", "PNG image output path")
 	heightmap.Flags().StringVar(&dotenvPath, "env", "", "Dot env file path")
 	heightmap.Flags().StringVar(&demPath, "dem-path", "", "Digital Elevation Model (DEM) files path")
@@ -54,8 +55,15 @@ func createHeightmap(cmd *cobra.Command, args []string) {
 		Dir:              "./",
 	}
 
+	interpolate, err := cmd.Flags().GetBool("interpolate")
+
+	if err != nil {
+		handleErr(err)
+	}
+
 	b, err := heightmapGen.CreateHeightMapImage(coords.Latitude, coords.Longitude, coords.Side,
-		heightmap.ResolutionConfig{Width: coords.Resolution, Height: coords.Resolution})
+		heightmap.ResolutionConfig{Width: coords.Resolution, Height: coords.Resolution,
+			IgnoreWhenOriginalImageIsSmaller: !interpolate})
 
 	if err != nil {
 		handleErr(err)
