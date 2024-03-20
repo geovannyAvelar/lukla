@@ -23,4 +23,5 @@ func Execute() error {
 
 func init() {
 	rootCmd.AddCommand(CreateRestCommand())
+	rootCmd.AddCommand(CreateHeightMapCommand())
 }
