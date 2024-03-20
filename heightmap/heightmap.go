@@ -157,13 +157,13 @@ func (t Generator) createHeightProfile(lat, lon float64, side int) (Elevation, e
 
 	i := 0
 	for x := 0; x < side; x = x + heightDataResolution {
-		var new_lat float64
-		var new_lon float64
-		geodesic.WGS84.Direct(lat, lon, southAzimuth, float64(x), &new_lat, &new_lon, nil)
+		var newLat float64
+		var newLon float64
+		geodesic.WGS84.Direct(lat, lon, southAzimuth, float64(x), &newLat, &newLon, nil)
 
 		for y := 0; y < side; y = y + heightDataResolution {
 			var pLat, pLon float64
-			geodesic.WGS84.Direct(new_lat, new_lon, eastAzimuth, float64(y), &pLat, &pLon, nil)
+			geodesic.WGS84.Direct(newLat, newLon, eastAzimuth, float64(y), &pLat, &pLon, nil)
 
 			if t.SrtmDownloader != nil {
 				_, err := t.SrtmDownloader.DownloadDemFile(pLat, pLon)
@@ -194,17 +194,17 @@ func (t Generator) createHeightProfile(lat, lon float64, side int) (Elevation, e
 
 			if y == side-(side%heightDataResolution) {
 				var pLat, pLon float64
-				geodesic.WGS84.Direct(new_lat, new_lon, southAzimuth, float64(side), &pLat, &pLon, nil)
+				geodesic.WGS84.Direct(newLat, newLon, southAzimuth, float64(side), &pLat, &pLon, nil)
 
 				e, _, _ := t.ElevationDataset.ElevationAt(pLat, pLon)
 
 				points[i] = Point{x / heightDataResolution, (y / heightDataResolution) + 1, pLat, pLon, e}
 
-				geodesic.WGS84.Direct(new_lat, new_lon, eastAzimuth, float64(side), &pLat, &pLon, nil)
+				geodesic.WGS84.Direct(newLat, newLon, eastAzimuth, float64(side), &pLat, &pLon, nil)
 
 				e1, _, _ := t.ElevationDataset.ElevationAt(pLat, pLon)
 
-				points[i+1] = Point{x/heightDataResolution + 1, (y / heightDataResolution), pLat, pLon, e1}
+				points[i+1] = Point{x/heightDataResolution + 1, y / heightDataResolution, pLat, pLon, e1}
 			}
 		}
 	}
