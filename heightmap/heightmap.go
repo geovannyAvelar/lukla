@@ -69,8 +69,9 @@ type Generator struct {
 }
 
 type ResolutionConfig struct {
-	Width  int
-	Height int
+	Width                            int
+	Height                           int
+	IgnoreWhenOriginalImageIsSmaller bool
 }
 
 // GetTileHeightmap Generate a heightmap with the same size of an OpenStreetMap (OSM) tile
@@ -92,7 +93,7 @@ func (t Generator) GetTileHeightmap(z, x, y, resolution int) ([]byte, error) {
 	}
 
 	bytes, err = t.CreateHeightMapImage(lat, lon, tileSide,
-		ResolutionConfig{resolution, resolution})
+		ResolutionConfig{resolution, resolution, false})
 
 	if err != nil {
 		return []byte{}, err
@@ -126,12 +127,14 @@ func (t Generator) CreateHeightMapImage(lat, lon float64, side int,
 	var b bytes.Buffer
 	writer := bufio.NewWriter(&b)
 
-	if conf.Height > 0 && conf.Width > 0 {
-		resizedImg := resize.Resize(uint(conf.Width), uint(conf.Height), imgRgba, resize.Lanczos3)
-		err := png.Encode(writer, resizedImg)
+	if !conf.IgnoreWhenOriginalImageIsSmaller {
+		if conf.Height > elevation.Height && conf.Width > elevation.Width {
+			resizedImg := resize.Resize(uint(conf.Width), uint(conf.Height), imgRgba, resize.Lanczos3)
+			err := png.Encode(writer, resizedImg)
 
-		if err != nil {
-			return []byte{}, errors.New("cannot resize heightmap image")
+			if err != nil {
+				return []byte{}, errors.New("cannot resize heightmap image")
+			}
 		}
 	}
 
