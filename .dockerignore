@@ -1,1 +1,7 @@
 data/
+*/testdata
+*.env
+.gitignore
+README.md
+LICENSE.md
+Makefile
