@@ -1,4 +1,4 @@
-FROM golang:1.18-alpine
+FROM golang:1.19-alpine
 
 WORKDIR /app
 
@@ -10,11 +10,8 @@ COPY go.sum ./
 
 RUN go mod download
 
-COPY env/ internal/
-COPY *.go ./
+COPY . ./
 
 RUN go build -o lukla main.go
 
-EXPOSE 9000
-
-CMD [ "./lukla" ]
+CMD [ "./lukla", "rest" ]
