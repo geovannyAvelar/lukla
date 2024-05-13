@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"errors"
 	"fmt"
+	log "github.com/sirupsen/logrus"
 	"io"
 	"math"
 	"net/http"
@@ -11,9 +12,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
-
-	log "github.com/sirupsen/logrus"
 )
 
 // SRTM30 dataset base url
@@ -95,15 +93,13 @@ func (d Downloader) downloadZippedDemFile(lat, lon float64) (string, []byte, err
 
 	url := d.BasePath + "/" + filename
 
-	client := &http.Client{
-		Timeout: 60 * time.Second,
-	}
+	client := &http.Client{}
 	req, _ := http.NewRequest("GET", url, nil)
 	req.Header.Add("Authorization", "Bearer "+token.AccessToken)
 
-	resp, err := client.Do(req)
-
 	log.Infof("Downloading file %s from SRTM30m server...", filename)
+
+	resp, err := client.Do(req)
 
 	if err != nil {
 		err := fmt.Errorf("cannot download hgt file %s. Cause: %w", filename, err)
@@ -144,7 +140,7 @@ func (d Downloader) saveZipHgtFile(path string, bytes []byte) error {
 		return fmt.Errorf("cannot save HGT file %s. cause: %w", path, err)
 	}
 
-	log.Infof("Zip file save on %s", path)
+	log.Infof("Zip file saved on %s", path)
 
 	return nil
 }

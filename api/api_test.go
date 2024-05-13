@@ -20,6 +20,10 @@ func (h HeightmapGenTest) CreateHeightMapImage(lat, lon float64, side int, conf 
 	return []byte{}, nil
 }
 
+func (h HeightmapGenTest) GetPointsElevations(points []heightmap.Point) []heightmap.Point {
+	return points
+}
+
 func TestHandleTile(t *testing.T) {
 	t.Parallel()
 
