@@ -147,6 +147,23 @@ func (t Generator) CreateHeightMapImage(lat, lon float64, side int,
 	return b.Bytes(), nil
 }
 
+func (t Generator) GetPointsElevations(points []Point) []Point {
+	for i, p := range points {
+		if t.SrtmDownloader != nil {
+			_, err := t.SrtmDownloader.DownloadDemFile(p.Lat, p.Lon)
+
+			if err != nil {
+				msg := "cannot download digital elevation model file for coordinate %f, %f. Cause: %s"
+				log.Warnf(msg, p.Lat, p.Lon, err)
+			}
+		}
+
+		points[i].Elevation, _, _ = t.ElevationDataset.ElevationAt(p.Lat, p.Lon)
+	}
+
+	return points
+}
+
 func (t Generator) createHeightProfile(lat, lon float64, side int) (Elevation, error) {
 	step := int(math.Ceil(float64(side)/float64(heightDataResolution))) + 1
 

@@ -1,8 +1,10 @@
 package api
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 
@@ -23,6 +25,20 @@ type HttpApi struct {
 type HeightMapGenerator interface {
 	GetTileHeightmap(z, x, y, resolution int) ([]byte, error)
 	CreateHeightMapImage(lat, lon float64, side int, conf heightmap.ResolutionConfig) ([]byte, error)
+	GetPointsElevations(points []heightmap.Point) []heightmap.Point
+}
+
+type coordinate struct {
+	Latitude  float64 `json:"longitude"`
+	Longitude float64 `json:"latitude"`
+	Elevation int16   `json:"elevation"`
+}
+
+func (c coordinate) toPoint() heightmap.Point {
+	return heightmap.Point{
+		Lat: c.Latitude,
+		Lon: c.Longitude,
+	}
 }
 
 func (a HttpApi) Run(port int) error {
@@ -32,6 +48,7 @@ func (a HttpApi) Run(port int) error {
 
 	a.Router.Route(a.BasePath, func(r chi.Router) {
 		r.Get("/heightmap", a.handleSquare)
+		r.Post("/heightmap/points", a.handleHeightmapProfile)
 		r.Get("/{z}/{x}/{y}.png", a.handleTile)
 		r.Get("/{resolution}/{z}/{x}/{y}.png", a.handleTile)
 	})
@@ -93,6 +110,49 @@ func (a HttpApi) handleSquare(w http.ResponseWriter, r *http.Request) {
 	w.Header().Add("Content-Type", "image/png")
 	w.Header().Add("Content-Disposition", "inline; filename=\"heightmap.png\"")
 	w.Write(b)
+}
+
+func (a HttpApi) handleHeightmapProfile(w http.ResponseWriter, r *http.Request) {
+	bytes, err := io.ReadAll(r.Body)
+
+	if err != nil {
+		http.Error(w, "cannot generate heightmap profile. Cause: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	var coordinates []coordinate
+	err = json.Unmarshal(bytes, &coordinates)
+
+	if err != nil {
+		http.Error(w, "cannot generate heightmap profile. Cause: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	points := a.getElevations(coordinates)
+	bytes, err = json.Marshal(points)
+
+	if err != nil {
+		http.Error(w, "cannot generate heightmap profile. Cause: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Write(bytes)
+}
+
+func (a HttpApi) getElevations(coordinates []coordinate) []coordinate {
+	points := make([]heightmap.Point, len(coordinates))
+
+	for i, c := range coordinates {
+		points[i] = c.toPoint()
+	}
+
+	points = a.HeightmapGen.GetPointsElevations(points)
+
+	for i, p := range points {
+		coordinates[i].Elevation = p.Elevation
+	}
+
+	return coordinates
 }
 
 func (a HttpApi) parseTileCoordinates(r *http.Request) (map[string]int, error) {

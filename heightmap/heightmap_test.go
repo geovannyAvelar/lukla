@@ -92,3 +92,41 @@ func TestFormatTilePath(t *testing.T) {
 		t.Errorf("expected %s but received %s", expected, path)
 	}
 }
+
+func TestGetPointsElevations(t *testing.T) {
+	t.Parallel()
+
+	h, err := hgt.OpenDataDir(demDatasetDir, nil)
+
+	if err != nil {
+		panic(err)
+	}
+
+	defer h.Close()
+
+	heightmapGen := Generator{
+		ElevationDataset: h,
+	}
+
+	var points = make([]Point, 2)
+	points[0] = Point{
+		Lat: 0.0,
+		Lon: 0.0,
+	}
+	points[1] = Point{
+		Lat: 27.687397,
+		Lon: 86.731814,
+	}
+
+	altitudes := heightmapGen.GetPointsElevations(points)
+
+	if len(altitudes) != len(points) {
+		t.Error("cannot get altitudes all points. Altitudes and points slices with different length")
+	}
+
+	for i, p := range points {
+		if altitudes[i].Elevation <= 0 {
+			t.Errorf("cannot get elevation for point %f, %f", p.Lat, p.Lon)
+		}
+	}
+}
