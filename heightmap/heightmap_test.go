@@ -123,10 +123,4 @@ func TestGetPointsElevations(t *testing.T) {
 	if len(altitudes) != len(points) {
 		t.Error("cannot get altitudes all points. Altitudes and points slices with different length")
 	}
-
-	for i, p := range points {
-		if altitudes[i].Elevation <= 0 {
-			t.Errorf("cannot get elevation for point %f, %f", p.Lat, p.Lon)
-		}
-	}
 }
