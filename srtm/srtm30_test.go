@@ -3,6 +3,7 @@ package srtm
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -32,6 +33,10 @@ var server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *
 	if r.Method == "POST" && strings.Contains(r.URL.Path, "/users/token") {
 		json.NewEncoder(w).Encode(tokens[0])
 		return
+	}
+
+	if r.Method == "GET" && strings.Contains(r.URL.Path, "N00E000.SRTMGL1.hgt.zip") {
+		http.Error(w, "Not found", http.StatusNotFound)
 	}
 
 	b, err := os.ReadFile("testdata/files.zip")
@@ -66,6 +71,29 @@ func TestDownloadDemFile(t *testing.T) {
 	}
 }
 
+func TestDownloadDemFileWith404(t *testing.T) {
+	t.Parallel()
+
+	earthdataApi := &EarthdataApi{BaseUrl: server.URL, HttpClient: http.DefaultClient}
+
+	d := Downloader{
+		BasePath:   server.URL,
+		Dir:        "testdata/dem",
+		Api:        earthdataApi,
+		HttpClient: http.DefaultClient,
+	}
+
+	_, err := d.DownloadDemFile(0.0, 0.0)
+
+	if err == nil {
+		t.Error("expected an error, but received success")
+	}
+
+	if err != nil && !errors.Is(errors.Unwrap(err), ErrNonExistentDemFile) {
+		t.Errorf("expected %s error but received: %s", ErrNonExistentDemFile, errors.Unwrap(err))
+	}
+}
+
 func TestDownloadZippedDemFile(t *testing.T) {
 	t.Parallel()
 
@@ -94,6 +122,25 @@ func TestDownloadZippedDemFile(t *testing.T) {
 
 	if !bytes.Equal(b, payload) {
 		t.Errorf("returned bytes are different of payload bytes")
+	}
+}
+
+func TestDownloadZipFile404(t *testing.T) {
+	t.Parallel()
+
+	earthdataApi := &EarthdataApi{BaseUrl: server.URL, HttpClient: http.DefaultClient}
+
+	d := Downloader{
+		BasePath:   server.URL,
+		Dir:        "testdata/dem",
+		Api:        earthdataApi,
+		HttpClient: http.DefaultClient,
+	}
+
+	_, _, err := d.downloadZippedDemFile(0.0, 0.0)
+
+	if err != nil && !errors.Is(errors.Unwrap(err), ErrNonExistentDemFile) {
+		t.Errorf("expected %s error but received: %s", ErrNonExistentDemFile, errors.Unwrap(err))
 	}
 }
 

@@ -187,7 +187,7 @@ func (t Generator) createHeightProfile(lat, lon float64, side int) (Elevation, e
 
 				if err != nil {
 					msg := "cannot download digital elevation model file for coordinate %f, %f. Cause: %s"
-					log.Warnf(msg, pLat, pLon, err)
+					log.Debugf(msg, pLat, pLon, err)
 				}
 			}
 
