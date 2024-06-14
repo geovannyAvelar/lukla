@@ -5,16 +5,17 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"github.com/muesli/gamut"
 	"image"
 	"image/png"
 	"math"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/apeyroux/gosm"
 	"github.com/geovannyAvelar/lukla/srtm"
-	"github.com/mazznoer/colorgrad"
 	"github.com/nfnt/resize"
 	"github.com/petoc/hgt"
 	"github.com/tidwall/geodesic"
@@ -112,16 +113,23 @@ func (t Generator) CreateHeightMapImage(lat, lon float64, side int,
 		return []byte{}, err
 	}
 
-	gradient, _ := colorgrad.NewGradient().Domain(float64(elevation.MinHeight),
-		float64(elevation.MaxHeight)).Build()
+	delta := int(elevation.MaxHeight - elevation.MinHeight)
+	colors := gamut.Monochromatic(gamut.Hex("#00000"), delta)
+	slices.Reverse(colors)
 
-	upLeft := image.Point{0, 0}
-	lowRight := image.Point{elevation.Width, elevation.Height}
+	upLeft := image.Point{}
+	lowRight := image.Point{X: elevation.Width, Y: elevation.Height}
 
-	imgRgba := image.NewRGBA(image.Rectangle{upLeft, lowRight})
+	imgRgba := image.NewRGBA(image.Rectangle{Min: upLeft, Max: lowRight})
 
 	for _, p := range elevation.Points {
-		imgRgba.Set(p.X, p.Y, gradient.At(float64(p.Elevation)))
+		i := int(elevation.MaxHeight) - int(p.Elevation)
+
+		if i > (len(colors) - 1) {
+			i = len(colors) - 1
+		}
+
+		imgRgba.Set(p.X, p.Y, colors[i])
 	}
 
 	var b bytes.Buffer
