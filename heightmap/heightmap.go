@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"github.com/muesli/gamut"
 	"image"
+	"image/color"
 	"image/png"
 	"math"
 	"os"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -72,6 +72,7 @@ type Generator struct {
 type ResolutionConfig struct {
 	Width                            int
 	Height                           int
+	ForceInterpolation               bool
 	IgnoreWhenOriginalImageIsSmaller bool
 }
 
@@ -94,7 +95,8 @@ func (t Generator) GetTileHeightmap(z, x, y, resolution int) ([]byte, error) {
 	}
 
 	bytes, err = t.CreateHeightMapImage(lat, lon, tileSide,
-		ResolutionConfig{resolution, resolution, false})
+		ResolutionConfig{Width: resolution, Height: resolution, ForceInterpolation: true,
+			IgnoreWhenOriginalImageIsSmaller: false})
 
 	if err != nil {
 		return []byte{}, err
@@ -113,9 +115,13 @@ func (t Generator) CreateHeightMapImage(lat, lon float64, side int,
 		return []byte{}, err
 	}
 
-	delta := int(elevation.MaxHeight - elevation.MinHeight)
-	colors := gamut.Monochromatic(gamut.Hex("#00000"), delta)
-	slices.Reverse(colors)
+	var colors []color.Color
+
+	if elevation.MaxHeight > 0 {
+		colors = gamut.Monochromatic(gamut.Hex("#00000"), int(elevation.MaxHeight))
+	} else {
+		colors = []color.Color{color.Black}
+	}
 
 	upLeft := image.Point{}
 	lowRight := image.Point{X: elevation.Width, Y: elevation.Height}
@@ -123,10 +129,14 @@ func (t Generator) CreateHeightMapImage(lat, lon float64, side int,
 	imgRgba := image.NewRGBA(image.Rectangle{Min: upLeft, Max: lowRight})
 
 	for _, p := range elevation.Points {
-		i := int(elevation.MaxHeight) - int(p.Elevation)
+		i := int(p.Elevation)
 
 		if i > (len(colors) - 1) {
 			i = len(colors) - 1
+		}
+
+		if i < 0 {
+			i = 0
 		}
 
 		imgRgba.Set(p.X, p.Y, colors[i])
@@ -136,7 +146,7 @@ func (t Generator) CreateHeightMapImage(lat, lon float64, side int,
 	writer := bufio.NewWriter(&b)
 
 	if !conf.IgnoreWhenOriginalImageIsSmaller {
-		if conf.Height > elevation.Height && conf.Width > elevation.Width {
+		if conf.ForceInterpolation || (conf.Height > elevation.Height && conf.Width > elevation.Width) {
 			resizedImg := resize.Resize(uint(conf.Width), uint(conf.Height), imgRgba, resize.Lanczos3)
 			err := png.Encode(writer, resizedImg)
 
