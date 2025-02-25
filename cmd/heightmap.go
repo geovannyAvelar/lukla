@@ -9,7 +9,7 @@ import (
 type heightmapCoords struct {
 	Latitude   float64
 	Longitude  float64
-	Side       int
+	Side       float64
 	Resolution int
 }
 
@@ -95,7 +95,7 @@ func parseCoordinateAndResParams(cmd *cobra.Command) heightmapCoords {
 		handleErr(err)
 	}
 
-	side, err := cmd.Flags().GetInt("side")
+	side, err := cmd.Flags().GetFloat64("side")
 
 	if err != nil {
 		handleErr(err)
