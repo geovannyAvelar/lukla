@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 var ErrNonExistentDemFile = errors.New("cannot locate DEM file on remote repository")
@@ -23,14 +24,23 @@ var defaultSRTMServerURL = "https://e4ftl01.cr.usgs.gov/MEASURES/SRTMGL1.003/200
 var filePathSep = strings.ReplaceAll(strconv.QuoteRune(os.PathSeparator), "'", "")
 
 type Downloader struct {
-	BasePath            string
-	Dir                 string
-	HttpClient          *http.Client
-	Api                 *EarthdataApi
-	nonExistentZipFiles *map[string]bool
+	BasePath   string
+	Dir        string
+	HttpClient *http.Client
+	Api        *EarthdataApi
+	//nonExistentZipFiles *map[string]bool
+	downloads map[string]*sync.Mutex
 }
 
 func (d *Downloader) DownloadDemFile(pLat, pLon float64) (string, error) {
+	//if d.nonExistentZipFiles == nil {
+	//d.nonExistentZipFiles = &map[string]bool{}
+	//}
+
+	if d.downloads == nil {
+		d.downloads = make(map[string]*sync.Mutex)
+	}
+
 	filename := generateZipDemFileName(pLat, pLon)
 	zipFilepath := d.Dir + filePathSep + filename
 
@@ -62,7 +72,10 @@ func (d *Downloader) DownloadDemFile(pLat, pLon float64) (string, error) {
 
 		log.Infof("File %s is uncompressed", zipPath)
 
-		os.Remove(zipPath)
+		err = os.Remove(zipPath)
+		if err != nil {
+			log.Warnf("cannot remove zip file %s. Cause: %s", zipPath, err)
+		}
 
 		return files[0], nil
 	}
@@ -75,26 +88,32 @@ func (d *Downloader) downloadZippedDemFile(lat, lon float64) (string, []byte, er
 		d.BasePath = defaultSRTMServerURL
 	}
 
-	if d.nonExistentZipFiles == nil {
-		d.nonExistentZipFiles = &map[string]bool{}
-	}
-
 	filename := generateZipDemFileName(lat, lon)
 
 	if d.isZipFileNonExistent(filename) {
 		return "", nil, ErrNonExistentDemFile
 	}
 
-	filepath := d.Dir + filePathSep + filename
+	mutex := d.downloads[filename]
 
-	if d.checkIfDemFileExists(filepath) {
-		b, err := os.ReadFile(filepath)
+	if mutex == nil {
+		mutex = &sync.Mutex{}
+		d.downloads[filename] = mutex
+	}
+
+	mutex.Lock()
+	defer mutex.Unlock()
+
+	demFilepath := d.Dir + filePathSep + filename
+
+	if d.checkIfDemFileExists(demFilepath) {
+		b, err := os.ReadFile(demFilepath)
 
 		if err != nil {
-			return "", nil, fmt.Errorf("cannot read %s file. cause: %w", filepath, err)
+			return "", nil, fmt.Errorf("cannot read %s file. cause: %w", demFilepath, err)
 		}
 
-		return filepath, b, nil
+		return demFilepath, b, nil
 	}
 
 	token, err := d.Api.GenerateToken()
@@ -121,7 +140,7 @@ func (d *Downloader) downloadZippedDemFile(lat, lon float64) (string, []byte, er
 
 	if resp.StatusCode != 200 {
 		if resp.StatusCode == 404 {
-			(*d.nonExistentZipFiles)[filename] = true
+			//(*d.nonExistentZipFiles)[filename] = true
 
 			err := fmt.Errorf("received a %d error during file %s request. Cause %w", resp.StatusCode, url, ErrNonExistentDemFile)
 			return "", nil, err
@@ -139,13 +158,13 @@ func (d *Downloader) downloadZippedDemFile(lat, lon float64) (string, []byte, er
 		return "", nil, fmt.Errorf("cannot download file %s. cause: %w", url, err)
 	}
 
-	err = d.saveZipHgtFile(filepath, b)
+	err = d.saveZipHgtFile(demFilepath, b)
 
 	if err != nil {
-		return "", nil, fmt.Errorf("cannot save %s file. cause: %w", filepath, err)
+		return "", nil, fmt.Errorf("cannot save %s file. cause: %w", demFilepath, err)
 	}
 
-	return filepath, b, nil
+	return demFilepath, b, nil
 }
 
 func (d *Downloader) saveZipHgtFile(path string, bytes []byte) error {
@@ -218,8 +237,8 @@ func (d *Downloader) unzip(zipFile string, destFolder string) ([]string, error) 
 }
 
 func (d *Downloader) isZipFileNonExistent(filename string) bool {
-	_, ok := (*d.nonExistentZipFiles)[filename]
-	return ok
+	//_, ok := (*d.nonExistentZipFiles)[filename]
+	return false
 }
 
 func generateZipDemFileName(lat, lon float64) string {
