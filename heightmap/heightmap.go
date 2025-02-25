@@ -23,7 +23,7 @@ import (
 )
 
 // Digital Elevation Model (DEM) resolution in meters
-const heightDataResolution = 30
+const heightDataResolution = 30.0
 
 // Azimuth angle pointing to the south
 const southAzimuth = 180
@@ -92,7 +92,7 @@ func (t Generator) GetTileHeightmap(z, x, y, resolution int) ([]byte, error) {
 	osmTile := gosm.NewTileWithXY(x, y, z)
 	lat, lon := osmTile.Num2deg()
 
-	tileSide := int(calculateTileSizeKm(z)) * 1000
+	tileSide := calculateTileSizeKm(z) * 1000
 
 	bytes, err = t.CreateHeightMapImage(lat, lon, tileSide,
 		ResolutionConfig{resolution, resolution, false})
@@ -111,9 +111,9 @@ func (t Generator) GetTileHeightmap(z, x, y, resolution int) ([]byte, error) {
 	return bytes, nil
 }
 
-func (t Generator) CreateHeightMapImage(lat, lon float64, side int,
+func (t Generator) CreateHeightMapImage(lat, lon float64, side float64,
 	conf ResolutionConfig) ([]byte, error) {
-	step := int(math.Ceil(float64(side)/float64(heightDataResolution))) + 1
+	step := int(math.Ceil(side/heightDataResolution)) - 1
 
 	upLeft := image.Point{}
 	lowRight := image.Point{X: step, Y: step}
@@ -170,16 +170,16 @@ func (t Generator) GetPointsElevations(points []Point) []Point {
 	return points
 }
 
-func (t Generator) createHeightProfile(lat, lon float64, side int, processFuncParam interface{},
+func (t Generator) createHeightProfile(lat, lon float64, side float64, processFuncParam interface{},
 	processFunc heightProfileProcessFunc) error {
 	i := 0
 
-	for x := 0; x < side; x = x + heightDataResolution {
+	for x := 0; x < int(side); x = x + heightDataResolution {
 		var newLat float64
 		var newLon float64
 		geodesic.WGS84.Direct(lat, lon, southAzimuth, float64(x), &newLat, &newLon, nil)
 
-		for y := 0; y < side; y = y + heightDataResolution {
+		for y := 0; y < int(side); y = y + heightDataResolution {
 			var pLat, pLon float64
 			geodesic.WGS84.Direct(newLat, newLon, eastAzimuth, float64(y), &pLat, &pLon, nil)
 
