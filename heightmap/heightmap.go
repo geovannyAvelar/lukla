@@ -34,14 +34,21 @@ const eastAzimuth = 90
 // Path separator
 var filePathSep = strings.ReplaceAll(strconv.QuoteRune(os.PathSeparator), "'", "")
 
-// Tile side in meters for each zoom level in OpenStreetMap (OSM)
-var zoomLevelSide = map[int]int{
-	10: 35817,
-	11: 18023,
-	12: 4635,
-	13: 4503,
-	14: 2251,
-	15: 292,
+type heightProfileProcessFunc func(*Point, interface{}, int) error
+
+func createInMemoryHeightProfile(point *Point, i interface{}, index int) error {
+	e := i.(*Elevation)
+	e.Points[index] = *point
+
+	if point.Elevation < e.MinHeight {
+		e.MinHeight = point.Elevation
+	}
+
+	if point.Elevation > e.MaxHeight {
+		e.MaxHeight = point.Elevation
+	}
+
+	return nil
 }
 
 // Elevation Represents a heightmap in memory
@@ -85,12 +92,7 @@ func (t Generator) GetTileHeightmap(z, x, y, resolution int) ([]byte, error) {
 	osmTile := gosm.NewTileWithXY(x, y, z)
 	lat, lon := osmTile.Num2deg()
 
-	tileSide := 0
-	if val, ok := zoomLevelSide[z]; ok {
-		tileSide = val
-	} else {
-		return []byte{}, errors.New("invalid zoom level. Minimum zoom level is 10, maximum is 15")
-	}
+	tileSide := int(calculateTileSizeKm(z)) * 1000
 
 	bytes, err = t.CreateHeightMapImage(lat, lon, tileSide,
 		ResolutionConfig{resolution, resolution, false})
@@ -99,36 +101,40 @@ func (t Generator) GetTileHeightmap(z, x, y, resolution int) ([]byte, error) {
 		return []byte{}, err
 	}
 
-	go t.saveTile(x, y, z, resolution, bytes)
+	go func() {
+		_, err := t.saveTile(x, y, z, resolution, bytes)
+		if err != nil {
+			log.Errorf("cannot save tile (%d, %d, %d) to disk. Cause: %s", x, y, z, err)
+		}
+	}()
 
 	return bytes, nil
 }
 
 func (t Generator) CreateHeightMapImage(lat, lon float64, side int,
 	conf ResolutionConfig) ([]byte, error) {
-	elevation, err := t.createHeightProfile(lat, lon, side)
+	step := int(math.Ceil(float64(side)/float64(heightDataResolution))) + 1
+
+	upLeft := image.Point{}
+	lowRight := image.Point{X: step, Y: step}
+
+	imgRgba := image.NewRGBA(image.Rectangle{Min: upLeft, Max: lowRight})
+	gradient, _ := colorgrad.NewGradient().Domain(0, 8865).Build()
+
+	err := t.createHeightProfile(lat, lon, side, imgRgba, func(point *Point, i interface{}, index int) error {
+		imgRgba.Set(point.X, point.Y, gradient.At(float64(point.Elevation)))
+		return nil
+	})
 
 	if err != nil {
 		return []byte{}, err
-	}
-
-	gradient, _ := colorgrad.NewGradient().Domain(float64(elevation.MinHeight),
-		float64(elevation.MaxHeight)).Build()
-
-	upLeft := image.Point{0, 0}
-	lowRight := image.Point{elevation.Width, elevation.Height}
-
-	imgRgba := image.NewRGBA(image.Rectangle{upLeft, lowRight})
-
-	for _, p := range elevation.Points {
-		imgRgba.Set(p.X, p.Y, gradient.At(float64(p.Elevation)))
 	}
 
 	var b bytes.Buffer
 	writer := bufio.NewWriter(&b)
 
 	if !conf.IgnoreWhenOriginalImageIsSmaller {
-		if conf.Height > elevation.Height && conf.Width > elevation.Width {
+		if conf.Height < step && conf.Width < step {
 			resizedImg := resize.Resize(uint(conf.Width), uint(conf.Height), imgRgba, resize.Lanczos3)
 			err := png.Encode(writer, resizedImg)
 
@@ -164,15 +170,10 @@ func (t Generator) GetPointsElevations(points []Point) []Point {
 	return points
 }
 
-func (t Generator) createHeightProfile(lat, lon float64, side int) (Elevation, error) {
-	step := int(math.Ceil(float64(side)/float64(heightDataResolution))) + 1
-
-	points := make([]Point, step*step)
-
-	var minHeight int16 = 0
-	var maxHeight int16 = 0
-
+func (t Generator) createHeightProfile(lat, lon float64, side int, processFuncParam interface{},
+	processFunc heightProfileProcessFunc) error {
 	i := 0
+
 	for x := 0; x < side; x = x + heightDataResolution {
 		var newLat float64
 		var newLon float64
@@ -193,46 +194,18 @@ func (t Generator) createHeightProfile(lat, lon float64, side int) (Elevation, e
 
 			e, _, _ := t.ElevationDataset.ElevationAt(pLat, pLon)
 
-			if x == 0 && y == 0 {
-				minHeight = e
-			}
+			point := &Point{x / heightDataResolution, y / heightDataResolution, pLat, pLon, e}
+			err := processFunc(point, processFuncParam, i)
 
-			if e < minHeight {
-				minHeight = e
+			if err != nil {
+				log.Errorf("cannot process point (%d, %d). Cause: %s", point.X, point.Y, err)
 			}
-
-			if e > maxHeight {
-				maxHeight = e
-			}
-
-			points[i] = Point{x / heightDataResolution, y / heightDataResolution, pLat, pLon, e}
 
 			i++
-
-			if y == side-(side%heightDataResolution) {
-				var pLat, pLon float64
-				geodesic.WGS84.Direct(newLat, newLon, southAzimuth, float64(side), &pLat, &pLon, nil)
-
-				e, _, _ := t.ElevationDataset.ElevationAt(pLat, pLon)
-
-				points[i] = Point{x / heightDataResolution, (y / heightDataResolution) + 1, pLat, pLon, e}
-
-				geodesic.WGS84.Direct(newLat, newLon, eastAzimuth, float64(side), &pLat, &pLon, nil)
-
-				e1, _, _ := t.ElevationDataset.ElevationAt(pLat, pLon)
-
-				points[i+1] = Point{x/heightDataResolution + 1, y / heightDataResolution, pLat, pLon, e1}
-			}
 		}
 	}
 
-	return Elevation{
-		Width:     step,
-		Height:    step,
-		MinHeight: minHeight,
-		MaxHeight: maxHeight,
-		Points:    points,
-	}, nil
+	return nil
 }
 
 func (t Generator) saveTile(x int, y int, z, resolution int, bytes []byte) (string, error) {
@@ -287,4 +260,9 @@ func formatTileDirPath(dir string, x, z, resolution int) string {
 	zStr := fmt.Sprintf("%d", z)
 
 	return dir + filePathSep + resStr + filePathSep + zStr + filePathSep + xStr
+}
+
+func calculateTileSizeKm(zoomLevel int) float64 {
+	const earthCircumferenceKm = 40075.0
+	return earthCircumferenceKm / math.Exp2(float64(zoomLevel))
 }
