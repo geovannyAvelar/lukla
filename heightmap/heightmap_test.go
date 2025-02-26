@@ -2,6 +2,7 @@ package heightmap
 
 import (
 	"bytes"
+	"math"
 	"os"
 	"testing"
 
@@ -27,7 +28,18 @@ func TestCreateHeightProfile(t *testing.T) {
 		Dir:              tilesDir,
 	}
 
-	_, err = heightmapGen.createHeightProfile(27.687397, 86.731814, 2251)
+	side := 2251
+	step := int(math.Ceil(float64(side)/float64(heightDataResolution))) + 1
+
+	elevation := &Elevation{
+		Width:     step,
+		Height:    step,
+		MinHeight: 0,
+		MaxHeight: 0,
+		Points:    make([]Point, step*step),
+	}
+
+	err = heightmapGen.createHeightProfile(27.687397, 86.731814, side, elevation, createInMemoryHeightProfile)
 
 	if err != nil {
 		t.Errorf("cannot create height profile. cause: %s", err)

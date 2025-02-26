@@ -24,7 +24,7 @@ type HttpApi struct {
 
 type HeightMapGenerator interface {
 	GetTileHeightmap(z, x, y, resolution int) ([]byte, error)
-	CreateHeightMapImage(lat, lon float64, side int, conf heightmap.ResolutionConfig) ([]byte, error)
+	CreateHeightMapImage(lat, lon float64, side float64, conf heightmap.ResolutionConfig) ([]byte, error)
 	GetPointsElevations(points []heightmap.Point) []heightmap.Point
 }
 
@@ -198,9 +198,9 @@ func (a HttpApi) parseSquareCoordinates(r *http.Request) (float64, float64, erro
 	return lat, lon, nil
 }
 
-func (a HttpApi) parseSquareSide(r *http.Request) int {
+func (a HttpApi) parseSquareSide(r *http.Request) float64 {
 	sideParam := r.URL.Query().Get("side")
-	side, err := strconv.Atoi(sideParam)
+	side, err := strconv.ParseFloat(sideParam, 64)
 
 	if err != nil {
 		return 10000
