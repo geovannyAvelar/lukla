@@ -26,6 +26,7 @@ type HeightMapGenerator interface {
 	GetTileHeightmap(z, x, y, resolution int) ([]byte, error)
 	CreateHeightMapImage(lat, lon float64, side float64, conf heightmap.ResolutionConfig) ([]byte, error)
 	GetPointsElevations(points []heightmap.Point) []heightmap.Point
+	GenerateAllTilesInZoomLevel(zoomLevel int)
 }
 
 type coordinate struct {
@@ -51,6 +52,7 @@ func (a HttpApi) Run(port int) error {
 		r.Post("/heightmap/points", a.handleHeightmapProfile)
 		r.Get("/{z}/{x}/{y}.png", a.handleTile)
 		r.Get("/{resolution}/{z}/{x}/{y}.png", a.handleTile)
+		r.Post("/processTiles/{z}", a.processAllTiles)
 	})
 
 	headersOk := handlers.AllowedHeaders([]string{"X-Requested-With"})
@@ -137,6 +139,19 @@ func (a HttpApi) handleHeightmapProfile(w http.ResponseWriter, r *http.Request) 
 	}
 
 	w.Write(bytes)
+}
+
+func (a HttpApi) processAllTiles(w http.ResponseWriter, r *http.Request) {
+	zParam := chi.URLParam(r, "z")
+
+	z, zParseErr := strconv.Atoi(zParam)
+
+	if zParseErr != nil || z < 0 {
+		http.Error(w, "invalid zoom level", http.StatusBadRequest)
+		return
+	}
+
+	a.HeightmapGen.GenerateAllTilesInZoomLevel(z)
 }
 
 func (a HttpApi) getElevations(coordinates []coordinate) []coordinate {
