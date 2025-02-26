@@ -36,30 +36,6 @@ var filePathSep = strings.ReplaceAll(strconv.QuoteRune(os.PathSeparator), "'", "
 
 type heightProfileProcessFunc func(*Point, interface{}, int) error
 
-func createInMemoryHeightProfile(point *Point, i interface{}, index int) error {
-	e := i.(*Elevation)
-	e.Points[index] = *point
-
-	if point.Elevation < e.MinHeight {
-		e.MinHeight = point.Elevation
-	}
-
-	if point.Elevation > e.MaxHeight {
-		e.MaxHeight = point.Elevation
-	}
-
-	return nil
-}
-
-// Elevation Represents a heightmap in memory
-type Elevation struct {
-	Width     int
-	Height    int
-	MinHeight int16
-	MaxHeight int16
-	Points    []Point
-}
-
 // Point Elevation of a specific geographic point represented by latitude and longitude (WGS84)
 // X and Y represents a point in the heightmap image
 type Point struct {
@@ -83,10 +59,10 @@ type ResolutionConfig struct {
 
 // GetTileHeightmap Generate a heightmap with the same size of an OpenStreetMap (OSM) tile
 func (t Generator) GetTileHeightmap(z, x, y, resolution int) ([]byte, error) {
-	bytes, err := t.getTileFromDisk(x, y, z, resolution)
+	byteArray, err := t.getTileFromDisk(x, y, z, resolution)
 
 	if err == nil {
-		return bytes, nil
+		return byteArray, nil
 	}
 
 	osmTile := gosm.NewTileWithXY(x, y, z)
@@ -94,7 +70,7 @@ func (t Generator) GetTileHeightmap(z, x, y, resolution int) ([]byte, error) {
 
 	tileSide := calculateTileSizeKm(z) * 1000
 
-	bytes, err = t.CreateHeightMapImage(lat, lon, tileSide,
+	byteArray, err = t.CreateHeightMapImage(lat, lon, tileSide,
 		ResolutionConfig{resolution, resolution, false})
 
 	if err != nil {
@@ -102,13 +78,13 @@ func (t Generator) GetTileHeightmap(z, x, y, resolution int) ([]byte, error) {
 	}
 
 	go func() {
-		_, err := t.saveTile(x, y, z, resolution, bytes)
+		_, err := t.saveTile(x, y, z, resolution, byteArray)
 		if err != nil {
 			log.Errorf("cannot save tile (%d, %d, %d) to disk. Cause: %s", x, y, z, err)
 		}
 	}()
 
-	return bytes, nil
+	return byteArray, nil
 }
 
 func (t Generator) CreateHeightMapImage(lat, lon float64, side float64,
@@ -122,7 +98,7 @@ func (t Generator) CreateHeightMapImage(lat, lon float64, side float64,
 	gradient, _ := colorgrad.NewGradient().Domain(0, 8865).Build()
 
 	err := t.createHeightProfile(lat, lon, side, imgRgba, func(point *Point, i interface{}, index int) error {
-		imgRgba.Set(point.X, point.Y, gradient.At(float64(point.Elevation)))
+		imgRgba.Set(point.Y, point.X, gradient.At(float64(point.Elevation)))
 		return nil
 	})
 
@@ -173,6 +149,8 @@ func (t Generator) GetPointsElevations(points []Point) []Point {
 func (t Generator) createHeightProfile(lat, lon float64, side float64, processFuncParam interface{},
 	processFunc heightProfileProcessFunc) error {
 	i := 0
+
+	side = math.Ceil(side)
 
 	for x := 0; x < int(side); x = x + heightDataResolution {
 		var newLat float64
