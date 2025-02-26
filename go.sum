@@ -1,3 +1,5 @@
+github.com/Jeffail/tunny v0.1.4 h1:chtpdz+nUtaYQeCKlNBg6GycFF/kGVHOr6A3cmzTJXs=
+github.com/Jeffail/tunny v0.1.4/go.mod h1:P8xAx4XQl0xsuhjX1DtfaMDCSuavzdb2rwbd0lk+fvo=
 github.com/apeyroux/gosm v0.0.0-20141123101329-8f3e37d8629e h1:QjP8uN1guPCeaHpd/ktUQFKFgf2LN7OcijpfFGmPzEU=
 github.com/apeyroux/gosm v0.0.0-20141123101329-8f3e37d8629e/go.mod h1:mZyvRoHNtsjwoQWRQCGYAyXe3zRnyZ69fZQvCiY9sPo=
 github.com/cpuguy83/go-md2man/v2 v2.0.3/go.mod h1:tgQtvFlXSQOSOSIRvRPT7W67SCa46tRHOmNcaadrF8o=

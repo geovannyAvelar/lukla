@@ -5,11 +5,13 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"github.com/Jeffail/tunny"
 	"github.com/mazznoer/colorgrad"
 	"image"
 	"image/png"
 	"math"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -91,7 +93,7 @@ func (t Generator) GetTileHeightmap(z, x, y, resolution int) ([]byte, error) {
 
 func (t Generator) CreateHeightMapImage(lat, lon float64, side float64,
 	conf ResolutionConfig) ([]byte, error) {
-	step := int(math.Ceil(side/heightDataResolution)) - 1
+	step := int(side)/heightDataResolution - 100
 
 	upLeft := image.Point{}
 	lowRight := image.Point{X: step, Y: step}
@@ -147,6 +149,29 @@ func (t Generator) GetPointsElevations(points []Point) []Point {
 	}
 
 	return points
+}
+
+func (t Generator) GenerateAllTilesInZoomLevel(zoomLevel int) {
+	tiles := listTilesFromZoomLevel(zoomLevel)
+
+	numCPUs := runtime.NumCPU()
+
+	pool := tunny.NewFunc(numCPUs, func(payload interface{}) interface{} {
+		tile := payload.(gosm.Tile)
+
+		_, err := t.GetTileHeightmap(tile.Z, tile.X, tile.Y, 256)
+
+		if err != nil {
+			log.Errorf("cannot generate heightmap for tile (%d, %d, %d). Cause: %s", tile.X, tile.Y, tile.Z, err)
+		}
+
+		return tile
+	})
+	defer pool.Close()
+
+	for _, tile := range tiles {
+		pool.Process(tile)
+	}
 }
 
 func (t Generator) createHeightProfile(lat, lon float64, side float64, processFuncParam interface{},
@@ -246,4 +271,20 @@ func formatTileDirPath(dir string, x, z, resolution int) string {
 func calculateTileSizeKm(zoomLevel int) float64 {
 	const earthCircumferenceKm = 40075.0
 	return earthCircumferenceKm / math.Exp2(float64(zoomLevel))
+}
+
+func listTilesFromZoomLevel(zoomLevel int) []gosm.Tile {
+	numTiles := int(math.Exp2(float64(zoomLevel)))
+	tiles := make([]gosm.Tile, numTiles*numTiles)
+
+	c := 0
+
+	for x := 0; x < numTiles; x++ {
+		for y := 0; y < numTiles; y++ {
+			tiles[c] = *gosm.NewTileWithXY(x, y, zoomLevel)
+			c++
+		}
+	}
+
+	return tiles
 }
