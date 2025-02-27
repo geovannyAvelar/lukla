@@ -93,7 +93,11 @@ func (t Generator) GetTileHeightmap(z, x, y, resolution int) ([]byte, error) {
 
 func (t Generator) CreateHeightMapImage(lat, lon float64, side float64,
 	conf ResolutionConfig) ([]byte, error) {
-	step := int(side)/heightDataResolution - 100
+	step := int(side) / heightDataResolution
+
+	if step >= 100 {
+		step -= 100
+	}
 
 	upLeft := image.Point{}
 	lowRight := image.Point{X: step, Y: step}
@@ -181,8 +185,7 @@ func (t Generator) createHeightProfile(lat, lon float64, side float64, processFu
 	side = math.Ceil(side)
 
 	for x := 0; x < int(side); x = x + heightDataResolution {
-		var newLat float64
-		var newLon float64
+		var newLat, newLon float64
 		geodesic.WGS84.Direct(lat, lon, southAzimuth, float64(x), &newLat, &newLon, nil)
 
 		for y := 0; y < int(side); y = y + heightDataResolution {
