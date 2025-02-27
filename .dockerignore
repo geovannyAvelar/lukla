@@ -1,6 +1,8 @@
 data/
 */testdata
 *.env
+*.bin
+*/testdata/*
 .gitignore
 README.md
 LICENSE.md
