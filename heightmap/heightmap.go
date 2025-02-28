@@ -11,9 +11,9 @@ import (
 	"image/png"
 	"math"
 	"os"
-	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/apeyroux/gosm"
 	"github.com/geovannyAvelar/lukla/srtm"
@@ -158,24 +158,32 @@ func (t Generator) GetPointsElevations(points []Point) []Point {
 func (t Generator) GenerateAllTilesInZoomLevel(zoomLevel int) {
 	tiles := listTilesFromZoomLevel(zoomLevel)
 
-	numCPUs := runtime.NumCPU()
+	pool := tunny.NewFunc(100, func(payload interface{}) interface{} {
+		start := time.Now()
 
-	pool := tunny.NewFunc(numCPUs, func(payload interface{}) interface{} {
 		tile := payload.(gosm.Tile)
 
 		_, err := t.GetTileHeightmap(tile.Z, tile.X, tile.Y, 256)
 
 		if err != nil {
-			log.Errorf("cannot generate heightmap for tile (%d, %d, %d). Cause: %s", tile.X, tile.Y, tile.Z, err)
+			log.Warnf("cannot generate heightmap for tile (%d, %d, %d). Cause: %s",
+				tile.X, tile.Y, tile.Z, err)
+			return nil
 		}
 
-		return tile
+		duration := time.Since(start)
+
+		log.Infof("Heightmap for tile (%d, %d, %d) generated. Took %s",
+			tile.X, tile.Y, tile.Z, duration)
+
+		return nil
 	})
-	defer pool.Close()
 
 	for _, tile := range tiles {
 		pool.Process(tile)
 	}
+
+	pool.Close()
 }
 
 func (t Generator) createHeightProfile(lat, lon float64, side float64, processFuncParam interface{},
@@ -198,6 +206,7 @@ func (t Generator) createHeightProfile(lat, lon float64, side float64, processFu
 				if err != nil {
 					msg := "cannot download digital elevation model file for coordinate %f, %f. Cause: %s"
 					log.Debugf(msg, pLat, pLon, err)
+					return err
 				}
 			}
 
