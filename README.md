@@ -32,13 +32,16 @@ None of the following variables are mandatory, but you will probably need some o
 * **LUKLA_TILES_PATH**: Directory where generated heightmap images are cached. Default is *./data/tiles*;
 * **LUKLA_DEM_FILES_PATH**: Directory where SRTM30 Digital elevation model .hgt files are stored. Default is *./data/dem*;
 * **LUKLA_HTTP_CLIENT_TIMEOUT**: Timeout in seconds for http.Client requests. Default is *60* seconds. Must be an integer.
+* **LUKLA_SRTM30M_BBOX_FILE**: Path to a file containing a GeoJSON Feature Collection describring all 
+ SRTM30m HGT files. Useful to detected areas where data is not available (e.g.: oceans). There's a 
+ json file in root directory containing this data. Default path is *./data/srtm30m_bounding_boxes.json.json*;
 
 ## Roadmap
 
 This is a pretty simple project, and it might be improved.
 
 - Write unit tests and improve the code testability;
-- Dockerize the app;
+- ~~Dockerize the app;~~ (**Implemented**)
 - ~~Capability to create a heightmap based on a bounding box (instead of just use OSM tiles);~~ (**Implemented**)
 - ~~Support to different zoom levels when creating OSM tiles (lower zoom levels must use bigger DEM 
  resolutions in order to maintain a good perfomance). Now, Lukla just support zoom levels bigger than 10;~~ (**Implemented**)
