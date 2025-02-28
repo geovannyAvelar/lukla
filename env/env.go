@@ -99,6 +99,19 @@ func GetDigitalElevationModelPath() string {
 	return "data/dem"
 }
 
+func GetBboxFilePath() string {
+	path := os.Getenv("LUKLA_SRTM30M_BBOX_FILE")
+
+	if path != "" {
+		return path
+	}
+
+	log.Warn("LUKLA_SRTM30M_BBOX_FILE enviroment variable is not defined. " +
+		"Default is data/srtm30m_bounding_boxes.json")
+
+	return "data/srtm30m_bounding_boxes.json"
+}
+
 // GetEarthDataApiUsername Returns the username to authenticate on EarthData API
 func GetEarthDataApiUsername() string {
 	username := os.Getenv("LUKLA_EARTHDATA_USERNAME")

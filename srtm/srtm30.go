@@ -4,7 +4,11 @@ import (
 	"archive/zip"
 	"errors"
 	"fmt"
+	env "github.com/geovannyAvelar/lukla/env"
 	log "github.com/sirupsen/logrus"
+	"github.com/spatial-go/geoos/geoencoding/geojson"
+	"github.com/spatial-go/geoos/planar"
+	"github.com/spatial-go/geoos/space"
 	"io"
 	"math"
 	"net/http"
@@ -13,9 +17,12 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 var ErrNonExistentDemFile = errors.New("cannot locate DEM file on remote repository")
+
+var ErrTileNotInsideSrtmCoverage = errors.New("tile is not inside SRTM coverage")
 
 // SRTM30 dataset base url
 var defaultSRTMServerURL = "https://e4ftl01.cr.usgs.gov/MEASURES/SRTMGL1.003/2000.02.11/"
@@ -28,9 +35,11 @@ type Downloader struct {
 	Dir                      string
 	HttpClient               *http.Client
 	Api                      *EarthdataApi
+	datasetBbox              *geojson.FeatureCollection
 	nonExistentZipFiles      *map[string]bool
 	nonExistentZipFilesMutex *sync.Mutex
 	downloads                map[string]*sync.Mutex
+	downloadsMutex           *sync.Mutex
 }
 
 func (d *Downloader) DownloadDemFile(pLat, pLon float64) (string, error) {
@@ -41,6 +50,17 @@ func (d *Downloader) DownloadDemFile(pLat, pLon float64) (string, error) {
 
 	if d.downloads == nil {
 		d.downloads = make(map[string]*sync.Mutex)
+		d.downloadsMutex = &sync.Mutex{}
+	}
+
+	insideSrtmArea, err := d.isPointInsideDataSet(pLat, pLon)
+
+	if err != nil {
+		return "", err
+	}
+
+	if !insideSrtmArea {
+		return "", ErrTileNotInsideSrtmCoverage
 	}
 
 	filename := generateZipDemFileName(pLat, pLon)
@@ -50,42 +70,77 @@ func (d *Downloader) DownloadDemFile(pLat, pLon float64) (string, error) {
 	demFilePath = strings.ReplaceAll(demFilePath, ".SRTMGL1", "")
 
 	if !d.checkIfDemFileExists(demFilePath) {
-		zipPath, _, err := d.downloadZippedDemFile(pLat, pLon)
+		zipPath, _, err := d.downloadZippedDemFileWithCoordinates(pLat, pLon)
 
 		if err != nil {
-			return "", fmt.Errorf("cannot download HGT file for coordinates %f, %f. Cause %w", pLat, pLon, err)
+			return "", fmt.Errorf("cannot download HGT file for coordinates %f, %f. "+
+				"Cause %w", pLat, pLon, err)
 		}
 
-		demPath := strings.ReplaceAll(zipPath, ".zip", "")
-
-		if d.checkIfDemFileExists(demPath) {
-			return demPath, nil
-		}
-
-		files, err := d.unzip(zipPath, d.Dir)
-
-		if err != nil {
-			return "", fmt.Errorf("cannot unzip file %s. Cause %w", zipPath, err)
-		}
-
-		if len(files) < 1 {
-			return "", fmt.Errorf("cannot uncompress file %s", zipPath)
-		}
-
-		log.Infof("File %s is uncompressed", zipPath)
-
-		err = os.Remove(zipPath)
-		if err != nil {
-			log.Warnf("cannot remove zip file %s. Cause: %s", zipPath, err)
-		}
-
-		return files[0], nil
+		return d.unzipDemFile(zipPath)
 	}
 
 	return demFilePath, nil
 }
 
-func (d *Downloader) downloadZippedDemFile(lat, lon float64) (string, []byte, error) {
+func (d *Downloader) DownloadAllDemFiles() error {
+	if d.BasePath == "" {
+		d.BasePath = defaultSRTMServerURL
+	}
+
+	if d.nonExistentZipFiles == nil {
+		d.nonExistentZipFiles = &map[string]bool{}
+		d.nonExistentZipFilesMutex = &sync.Mutex{}
+	}
+
+	if d.downloads == nil {
+		d.downloads = make(map[string]*sync.Mutex)
+		d.downloadsMutex = &sync.Mutex{}
+	}
+
+	err := d.loadDatasetBbox()
+
+	if err != nil {
+		return err
+	}
+
+	chunks := partitionSlice(d.datasetBbox.Features, 100)
+
+	for _, chunk := range chunks {
+		var c int64
+		var wg sync.WaitGroup
+
+		for _, feature := range chunk {
+			wg.Add(1)
+
+			go func(feature *geojson.Feature) {
+				filename := feature.Properties.MustString("dataFile")
+				url := d.BasePath + "/" + filename
+				path, _, err := d.downloadZippedDemFile(url)
+
+				if err != nil {
+					log.Errorf("cannot download HGT file %s. Cause %s", url, err)
+				}
+
+				_, err = d.unzipDemFile(path)
+
+				if err != nil {
+					log.Errorf("cannot unzip file %s. Cause %s", url, err)
+				}
+
+				c++
+
+				log.Infof("%d / %d file(s) downloaded", c, len(d.datasetBbox.Features))
+			}(feature)
+		}
+
+		wg.Wait()
+	}
+
+	return nil
+}
+
+func (d *Downloader) downloadZippedDemFileWithCoordinates(lat, lon float64) (string, []byte, error) {
 	if d.BasePath == "" {
 		d.BasePath = defaultSRTMServerURL
 	}
@@ -96,12 +151,25 @@ func (d *Downloader) downloadZippedDemFile(lat, lon float64) (string, []byte, er
 		return "", nil, ErrNonExistentDemFile
 	}
 
+	url := d.BasePath + "/" + filename
+
+	return d.downloadZippedDemFile(url)
+}
+
+func (d *Downloader) downloadZippedDemFile(url string) (string, []byte, error) {
+	filename := filepath.Base(url)
+
+	d.downloadsMutex.Lock()
 	mutex, ok := d.downloads[filename]
 
 	if !ok {
 		mutex = &sync.Mutex{}
 		d.downloads[filename] = mutex
 	}
+
+	d.downloadsMutex.Unlock()
+
+	mutex.Lock()
 
 	demFilepath := d.Dir + filePathSep + filename
 
@@ -121,15 +189,13 @@ func (d *Downloader) downloadZippedDemFile(lat, lon float64) (string, []byte, er
 		return "", nil, fmt.Errorf("cannot generate EarthData API token. Cause %w", err)
 	}
 
-	url := d.BasePath + "/" + filename
-
-	mutex.Lock()
-
 	client := &http.Client{}
 	req, _ := http.NewRequest("GET", url, nil)
 	req.Header.Add("Authorization", "Bearer "+token.AccessToken)
 
 	log.Infof("Downloading file %s from SRTM30m server...", filename)
+
+	start := time.Now()
 
 	resp, err := client.Do(req)
 
@@ -140,6 +206,8 @@ func (d *Downloader) downloadZippedDemFile(lat, lon float64) (string, []byte, er
 		return "", nil, err
 	}
 
+	log.Infof("File %s request completed. Status: %d", filename, resp.StatusCode)
+
 	if resp.StatusCode != 200 {
 		mutex.Unlock()
 
@@ -148,7 +216,8 @@ func (d *Downloader) downloadZippedDemFile(lat, lon float64) (string, []byte, er
 			(*d.nonExistentZipFiles)[filename] = true
 			d.nonExistentZipFilesMutex.Unlock()
 
-			err := fmt.Errorf("received a %d error during file %s request. Cause %w", resp.StatusCode, url, ErrNonExistentDemFile)
+			err := fmt.Errorf("received a %d error during file %s request. Cause %w",
+				resp.StatusCode, url, ErrNonExistentDemFile)
 			return "", nil, err
 		}
 
@@ -171,6 +240,10 @@ func (d *Downloader) downloadZippedDemFile(lat, lon float64) (string, []byte, er
 		mutex.Unlock()
 		return "", nil, fmt.Errorf("cannot save %s file. cause: %w", demFilepath, err)
 	}
+
+	duration := time.Since(start)
+
+	log.Infof("File %s downloaded in %s", filename, duration)
 
 	mutex.Unlock()
 	return demFilepath, b, nil
@@ -200,8 +273,33 @@ func (d *Downloader) checkIfDemFileExists(path string) bool {
 	return false
 }
 
+func (d *Downloader) unzipDemFile(path string) (string, error) {
+	if d.checkIfDemFileExists(strings.ReplaceAll(path, ".zip", "")) {
+		return path, nil
+	}
+
+	files, err := d.unzip(path, d.Dir)
+
+	if err != nil {
+		return "", fmt.Errorf("cannot unzip file %s. Cause %w", path, err)
+	}
+
+	if len(files) < 1 {
+		return "", fmt.Errorf("cannot uncompress file %s", path)
+	}
+
+	log.Infof("File %s is uncompressed", path)
+
+	err = os.Remove(path)
+	if err != nil {
+		log.Warnf("cannot remove zip file %s. Cause: %s", path, err)
+	}
+
+	return files[0], nil
+}
+
 func (d *Downloader) unzip(zipFile string, destFolder string) ([]string, error) {
-	files := []string{}
+	var files []string
 
 	r, err := zip.OpenReader(zipFile)
 	if err != nil {
@@ -245,6 +343,55 @@ func (d *Downloader) unzip(zipFile string, destFolder string) ([]string, error) 
 	return files, nil
 }
 
+func (d *Downloader) isPointInsideDataSet(lon, lat float64) (bool, error) {
+	err := d.loadDatasetBbox()
+
+	if err != nil {
+		return false, err
+	}
+
+	strategy := planar.NormalStrategy()
+
+	for _, feature := range d.datasetBbox.Features {
+		contains, err := strategy.Contains(feature.Geometry.Geometry(), space.Point{lon, lat})
+
+		if err != nil {
+			return false, err
+		}
+
+		if contains {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+func (d *Downloader) loadDatasetBbox() error {
+	if d.datasetBbox == nil {
+		file, err := os.Open(env.GetBboxFilePath())
+
+		if err != nil {
+			return err
+		}
+
+		boundingBoxData, err := io.ReadAll(file)
+
+		if err != nil {
+			return err
+		}
+
+		collection, err := geojson.UnmarshalFeatureCollection(boundingBoxData)
+		if err != nil {
+			return err
+		}
+
+		d.datasetBbox = collection
+	}
+
+	return nil
+}
+
 func (d *Downloader) isZipFileNonExistent(filename string) bool {
 	d.nonExistentZipFilesMutex.Lock()
 	_, ok := (*d.nonExistentZipFiles)[filename]
@@ -273,4 +420,16 @@ func pad(str string, length int, pad string) string {
 		return str
 	}
 	return strings.Repeat(pad, length-len(str)) + str
+}
+
+// PartitionSlice partitions a slice into chunks of the given size.
+func partitionSlice(slice []*geojson.Feature, chunkSize int) [][]*geojson.Feature {
+	if chunkSize <= 0 {
+		return nil
+	}
+	var chunks [][]*geojson.Feature
+	for chunkSize < len(slice) {
+		slice, chunks = slice[chunkSize:], append(chunks, slice[0:chunkSize:chunkSize])
+	}
+	return append(chunks, slice)
 }

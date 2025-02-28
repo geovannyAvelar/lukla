@@ -2,7 +2,7 @@ package cmd
 
 import (
 	"fmt"
-	internal "github.com/geovannyAvelar/lukla/env"
+	env "github.com/geovannyAvelar/lukla/env"
 	"github.com/geovannyAvelar/lukla/heightmap"
 	"github.com/geovannyAvelar/lukla/srtm"
 	"github.com/joho/godotenv"
@@ -22,7 +22,7 @@ var earthdataPassword string
 
 func createHgtDataDir() *hgt.DataDir {
 	if demPath == "" {
-		demPath = internal.GetDigitalElevationModelPath()
+		demPath = env.GetDigitalElevationModelPath()
 	}
 
 	h, err := hgt.OpenDataDir(demPath, nil)
@@ -38,7 +38,7 @@ func createHttpClient() *http.Client {
 	var timeout time.Duration
 
 	if httpClientTimeout <= 0 {
-		timeout = internal.GetHttpClientTimeout()
+		timeout = env.GetHttpClientTimeout()
 	}
 
 	return &http.Client{
@@ -48,11 +48,11 @@ func createHttpClient() *http.Client {
 
 func createEarthdataApiClient(client *http.Client) *srtm.EarthdataApi {
 	if earthdataUser == "" {
-		earthdataUser = internal.GetEarthDataApiUsername()
+		earthdataUser = env.GetEarthDataApiUsername()
 	}
 
 	if earthdataPassword == "" {
-		earthdataPassword = internal.GetEarthDataApiPassword()
+		earthdataPassword = env.GetEarthDataApiPassword()
 	}
 
 	return &srtm.EarthdataApi{
@@ -64,7 +64,7 @@ func createEarthdataApiClient(client *http.Client) *srtm.EarthdataApi {
 
 func createSrtmDownloader(client *http.Client, earthdataApi *srtm.EarthdataApi) *srtm.Downloader {
 	if demPath == "" {
-		demPath = internal.GetDigitalElevationModelPath()
+		demPath = env.GetDigitalElevationModelPath()
 	}
 
 	return &srtm.Downloader{
@@ -76,7 +76,7 @@ func createSrtmDownloader(client *http.Client, earthdataApi *srtm.EarthdataApi) 
 
 func createHeightmapGenerator(h *hgt.DataDir, downloader *srtm.Downloader) *heightmap.Generator {
 	if tilesPath == "" {
-		tilesPath = internal.GetTilesPath()
+		tilesPath = env.GetTilesPath()
 	}
 
 	return &heightmap.Generator{
