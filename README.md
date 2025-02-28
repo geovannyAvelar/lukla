@@ -34,7 +34,7 @@ None of the following variables are mandatory, but you will probably need some o
 * **LUKLA_HTTP_CLIENT_TIMEOUT**: Timeout in seconds for http.Client requests. Default is *60* seconds. Must be an integer.
 * **LUKLA_SRTM30M_BBOX_FILE**: Path to a file containing a GeoJSON Feature Collection describring all 
  SRTM30m HGT files. Useful to detected areas where data is not available (e.g.: oceans). There's a 
- json file in root directory containing this data. Default path is *./data/srtm30m_bounding_boxes.json.json*;
+ json file in root directory containing this data. Default path is *./data/srtm30m_bounding_boxes.json*;
 
 ## Roadmap
 
