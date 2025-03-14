@@ -204,6 +204,10 @@ func (t Generator) createHeightProfile(lat, lon float64, side float64, processFu
 				_, err := t.SrtmDownloader.DownloadDemFile(pLat, pLon)
 
 				if err != nil {
+					if errors.Is(err, srtm.ErrTileNotInsideSrtmCoverage) {
+						continue
+					}
+
 					msg := "cannot download digital elevation model file for coordinate %f, %f. Cause: %s"
 					log.Debugf(msg, pLat, pLon, err)
 					return err

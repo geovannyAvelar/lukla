@@ -27,10 +27,8 @@ go.work
 .idea
 
 # Data dir
-data/
-
-# Elevation files
-data/*.hgt
+data/tiles/*
+data/dem/*
 
 # Image files
 *.png
