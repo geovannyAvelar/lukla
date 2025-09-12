@@ -1,9 +1,10 @@
 package cmd
 
 import (
+	"os"
+
 	"github.com/geovannyAvelar/lukla/heightmap"
 	"github.com/spf13/cobra"
-	"os"
 )
 
 type heightmapCoords struct {
@@ -23,7 +24,7 @@ func CreateHeightMapCommand() *cobra.Command {
 
 	heightmap.Flags().Float64("latitude", 0.0, "Square initial latitude")
 	heightmap.Flags().Float64("longitude", 0.0, "Square initial longitude")
-	heightmap.Flags().Int("side", 1000, "Side of the square in meters")
+	heightmap.Flags().Float64("side", 1000, "Side of the square in meters")
 	heightmap.Flags().Int("resolution", 256, "PNG image resolution")
 	heightmap.Flags().Bool("interpolate", false, "Apply image resizing even when original image resolution is smaller than informed resolution")
 	heightmap.Flags().StringP("output", "o", "heightmap.png", "PNG image output path")
