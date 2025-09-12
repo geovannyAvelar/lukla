@@ -4,11 +4,6 @@ import (
 	"archive/zip"
 	"errors"
 	"fmt"
-	env "github.com/geovannyAvelar/lukla/env"
-	log "github.com/sirupsen/logrus"
-	"github.com/spatial-go/geoos/geoencoding/geojson"
-	"github.com/spatial-go/geoos/planar"
-	"github.com/spatial-go/geoos/space"
 	"io"
 	"math"
 	"net/http"
@@ -18,6 +13,12 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	env "github.com/geovannyAvelar/lukla/env"
+	log "github.com/sirupsen/logrus"
+	"github.com/spatial-go/geoos/geoencoding/geojson"
+	"github.com/spatial-go/geoos/planar"
+	"github.com/spatial-go/geoos/space"
 )
 
 var ErrNonExistentDemFile = errors.New("cannot locate DEM file on remote repository")
@@ -51,16 +52,6 @@ func (d *Downloader) DownloadDemFile(pLat, pLon float64) (string, error) {
 	if d.downloads == nil {
 		d.downloads = make(map[string]*sync.Mutex)
 		d.downloadsMutex = &sync.Mutex{}
-	}
-
-	insideSrtmArea, err := d.isPointInsideDataSet(pLat, pLon)
-
-	if err != nil {
-		return "", err
-	}
-
-	if !insideSrtmArea {
-		return "", ErrTileNotInsideSrtmCoverage
 	}
 
 	filename := generateZipDemFileName(pLat, pLon)
