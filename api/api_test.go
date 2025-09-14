@@ -2,11 +2,12 @@ package api
 
 import (
 	"context"
-	"github.com/geovannyAvelar/lukla/heightmap"
-	"github.com/go-chi/chi"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/geovannyAvelar/lukla/heightmap"
+	"github.com/go-chi/chi"
 )
 
 type HeightmapGenTest struct {
@@ -16,12 +17,16 @@ func (h HeightmapGenTest) GetTileHeightmap(z, x, y, resolution int) ([]byte, err
 	return []byte{}, nil
 }
 
-func (h HeightmapGenTest) CreateHeightMapImage(lat, lon float64, side int, conf heightmap.ResolutionConfig) ([]byte, error) {
+func (h HeightmapGenTest) CreateHeightMapImage(lat, lon, side float64, conf heightmap.ResolutionConfig) ([]byte, error) {
 	return []byte{}, nil
 }
 
 func (h HeightmapGenTest) GetPointsElevations(points []heightmap.Point) []heightmap.Point {
 	return points
+}
+
+func (h HeightmapGenTest) GenerateAllTilesInZoomLevel(zoomLevel int) {
+
 }
 
 func TestHandleTile(t *testing.T) {
