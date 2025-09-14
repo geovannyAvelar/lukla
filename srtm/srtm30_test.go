@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -94,19 +95,23 @@ func TestDownloadDemFileWith404(t *testing.T) {
 	}
 }
 
-func TestDownloadZippedDemFile(t *testing.T) {
+func TestDownloadZippedDemFileWithCoordinates(t *testing.T) {
 	t.Parallel()
 
 	earthdataApi := &EarthdataApi{BaseUrl: server.URL, HttpClient: http.DefaultClient}
 
 	d := Downloader{
-		BasePath:   server.URL,
-		Dir:        "testdata/dem",
-		Api:        earthdataApi,
-		HttpClient: http.DefaultClient,
+		BasePath:                 server.URL,
+		Dir:                      "testdata/dem",
+		Api:                      earthdataApi,
+		HttpClient:               http.DefaultClient,
+		nonExistentZipFiles:      &map[string]bool{},
+		nonExistentZipFilesMutex: &sync.Mutex{},
+		downloads:                make(map[string]*sync.Mutex),
+		downloadsMutex:           &sync.Mutex{},
 	}
 
-	path, b, err := d.downloadZippedDemFile(27.687619, 86.731679)
+	path, b, err := d.downloadZippedDemFileWithCoordinates(27.687619, 86.731679)
 
 	os.Remove(path)
 
@@ -131,13 +136,17 @@ func TestDownloadZipFile404(t *testing.T) {
 	earthdataApi := &EarthdataApi{BaseUrl: server.URL, HttpClient: http.DefaultClient}
 
 	d := Downloader{
-		BasePath:   server.URL,
-		Dir:        "testdata/dem",
-		Api:        earthdataApi,
-		HttpClient: http.DefaultClient,
+		BasePath:                 server.URL,
+		Dir:                      "testdata/dem",
+		Api:                      earthdataApi,
+		HttpClient:               http.DefaultClient,
+		nonExistentZipFiles:      &map[string]bool{},
+		nonExistentZipFilesMutex: &sync.Mutex{},
+		downloads:                make(map[string]*sync.Mutex),
+		downloadsMutex:           &sync.Mutex{},
 	}
 
-	_, _, err := d.downloadZippedDemFile(0.0, 0.0)
+	_, _, err := d.downloadZippedDemFileWithCoordinates(0.0, 0.0)
 
 	if err != nil && !errors.Is(errors.Unwrap(err), ErrNonExistentDemFile) {
 		t.Errorf("expected %s error but received: %s", ErrNonExistentDemFile, errors.Unwrap(err))
