@@ -5,8 +5,6 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"github.com/Jeffail/tunny"
-	"github.com/mazznoer/colorgrad"
 	"image"
 	"image/png"
 	"math"
@@ -14,6 +12,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Jeffail/tunny"
+	"github.com/mazznoer/colorgrad"
 
 	"github.com/apeyroux/gosm"
 	"github.com/geovannyAvelar/lukla/srtm"
@@ -110,6 +111,8 @@ func (t Generator) CreateHeightMapImage(lat, lon float64, side float64,
 		return nil
 	})
 
+	log.Infof("Height profile created for coordinates (%f, %f)", lat, lon)
+
 	if err != nil {
 		return []byte{}, err
 	}
@@ -119,6 +122,8 @@ func (t Generator) CreateHeightMapImage(lat, lon float64, side float64,
 
 	if !conf.IgnoreWhenOriginalImageIsSmaller {
 		if conf.Height < step && conf.Width < step {
+
+			log.Infof("Heightmap image for coordinates (%f, %f) is smaller than the desired resolution. Resizing image...", lat, lon)
 
 			resizedImg := resize.Resize(uint(conf.Width), uint(conf.Height), imgRgba, resize.Lanczos3)
 			err := png.Encode(writer, resizedImg)
@@ -243,6 +248,8 @@ func (t Generator) saveTile(x int, y int, z, resolution int, bytes []byte) (stri
 	if _, err := os.Stat(filepath); err == nil {
 		return filepath, nil
 	}
+
+	log.Infof("Saving tile (%d, %d, %d) to disk", x, y, z)
 
 	err = os.WriteFile(filepath, bytes, 0644)
 
