@@ -5,6 +5,8 @@ import (
 
 	"github.com/geovannyAvelar/lukla/heightmap"
 	"github.com/spf13/cobra"
+
+	log "github.com/sirupsen/logrus"
 )
 
 type heightmapCoords struct {
@@ -62,6 +64,8 @@ func createHeightmap(cmd *cobra.Command, args []string) {
 		handleErr(err)
 	}
 
+	log.Infof("Generating heightmap for coordinates (%f, %f)", coords.Latitude, coords.Longitude)
+
 	b, err := heightmapGen.CreateHeightMapImage(coords.Latitude, coords.Longitude, coords.Side,
 		heightmap.ResolutionConfig{Width: coords.Resolution, Height: coords.Resolution,
 			IgnoreWhenOriginalImageIsSmaller: !interpolate})
@@ -76,11 +80,15 @@ func createHeightmap(cmd *cobra.Command, args []string) {
 		handleErr(err)
 	}
 
+	log.Infof("Saving heightmap image to %s", output)
+
 	err = os.WriteFile(output, b, 0644)
 
 	if err != nil {
 		handleErr(err)
 	}
+
+	log.Infof("Heightmap image %s saved successfully", output)
 }
 
 func parseCoordinateAndResParams(cmd *cobra.Command) heightmapCoords {
