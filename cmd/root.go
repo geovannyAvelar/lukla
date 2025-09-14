@@ -15,6 +15,7 @@ var (
 
 func Execute() error {
 	log.SetFormatter(&log.TextFormatter{
+		DisableColors: false,
 		FullTimestamp: true,
 	})
 
