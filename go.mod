@@ -12,7 +12,7 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/mazznoer/colorgrad v0.9.1
 	github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646
-	github.com/sirupsen/logrus v1.9.0
+	github.com/sirupsen/logrus v1.9.1
 	github.com/spatial-go/geoos v1.1.3
 	github.com/spf13/cobra v1.8.0
 	github.com/tidwall/geodesic v0.3.5
