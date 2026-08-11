@@ -25,8 +25,12 @@ var ErrNonExistentDemFile = errors.New("cannot locate DEM file on remote reposit
 
 var ErrTileNotInsideSrtmCoverage = errors.New("tile is not inside SRTM coverage")
 
-// SRTM30 dataset base url
-var defaultSRTMServerURL = "https://e4ftl01.cr.usgs.gov/MEASURES/SRTMGL1.003/2000.02.11/"
+// SRTM30 dataset base url. LP DAAC retired the classic data pool
+// (e4ftl01.cr.usgs.gov/MEASURES/SRTMGL1.003/2000.02.11/) in 2026 and moved
+// SRTMGL1.003 to Earthdata Cloud - same EDL bearer-token auth, but granules
+// are addressed as <base>/<TILE>.SRTMGL1.hgt/<TILE>.SRTMGL1.hgt.zip instead
+// of a flat file listing (see tileUrl).
+var defaultSRTMServerURL = "https://data.lpdaac.earthdatacloud.nasa.gov/lp-prod-protected/SRTMGL1.003"
 
 // Path separator
 var filePathSep = strings.ReplaceAll(strconv.QuoteRune(os.PathSeparator), "'", "")
@@ -106,7 +110,7 @@ func (d *Downloader) DownloadAllDemFiles() error {
 
 			go func(feature *geojson.Feature) {
 				filename := feature.Properties.MustString("dataFile")
-				url := d.BasePath + "/" + filename
+				url := tileUrl(d.BasePath, filename)
 				path, _, err := d.downloadZippedDemFile(url)
 
 				if err != nil {
@@ -142,9 +146,17 @@ func (d *Downloader) downloadZippedDemFileWithCoordinates(lat, lon float64) (str
 		return "", nil, ErrNonExistentDemFile
 	}
 
-	url := d.BasePath + "/" + filename
+	url := tileUrl(d.BasePath, filename)
 
 	return d.downloadZippedDemFile(url)
+}
+
+// tileUrl builds a granule's download URL under the Earthdata Cloud layout:
+// each granule lives in its own folder, named after the file minus its .zip
+// extension.
+func tileUrl(basePath, filename string) string {
+	granuleDir := strings.TrimSuffix(filename, ".zip")
+	return basePath + "/" + granuleDir + "/" + filename
 }
 
 func (d *Downloader) downloadZippedDemFile(url string) (string, []byte, error) {
