@@ -47,6 +47,11 @@ const maxBatchZoomLevel = 12
 // Number of tiles generated concurrently by GenerateAllTilesInZoomLevel.
 const maxConcurrentTileGeneration = 100
 
+// maxSamplingDimension caps the native (pre-resize) sampling grid regardless of the
+// requested resolution or the real-world size of `side` - defense in depth for a
+// caller that requests no resolution, or an excessive one, over a very large area.
+const maxSamplingDimension = 4096
+
 // Path separator
 var filePathSep = strings.ReplaceAll(strconv.QuoteRune(os.PathSeparator), "'", "")
 
@@ -105,9 +110,37 @@ func (t Generator) GetTileHeightmap(z, x, y, resolution int) ([]byte, error) {
 	return byteArray, nil
 }
 
+// samplingStride picks the DEM sampling stride, in meters, for an area `side` meters
+// wide. It never samples finer than the native heightDataResolution grid, and coarsens
+// the stride so the native grid never needs more samples per axis than the larger of
+// the requested Width/Height (or maxSamplingDimension, whichever is smaller) - avoiding
+// O((side/heightDataResolution)^2) sampling cost and memory for real-world-sized
+// low-zoom tiles that only need a small output image.
+func samplingStride(side float64, conf ResolutionConfig) int {
+	stride := int(heightDataResolution)
+
+	target := maxSamplingDimension
+	if conf.Width > 0 && conf.Height > 0 {
+		target = conf.Width
+		if conf.Height > target {
+			target = conf.Height
+		}
+		if target > maxSamplingDimension {
+			target = maxSamplingDimension
+		}
+	}
+
+	if s := int(side) / target; s > stride {
+		stride = s
+	}
+
+	return stride
+}
+
 func (t Generator) CreateHeightMapImage(lat, lon float64, side float64,
 	conf ResolutionConfig) ([]byte, error) {
-	step := int(side) / heightDataResolution
+	stride := samplingStride(side, conf)
+	step := int(side) / stride
 
 	if step >= 100 {
 		step -= 100
@@ -119,7 +152,7 @@ func (t Generator) CreateHeightMapImage(lat, lon float64, side float64,
 	imgRgba := image.NewRGBA(image.Rectangle{Min: upLeft, Max: lowRight})
 	gradient, _ := colorgrad.NewGradient().Domain(0, 8865).Build()
 
-	err := t.createHeightProfile(lat, lon, side, imgRgba, func(point *Point, i interface{}, index int) error {
+	err := t.createHeightProfile(lat, lon, side, stride, imgRgba, func(point *Point, i interface{}, index int) error {
 		imgRgba.Set(point.Y, point.X, gradient.At(float64(point.Elevation)))
 		return nil
 	})
@@ -225,17 +258,17 @@ func (t Generator) GenerateAllTilesInZoomLevel(zoomLevel int) error {
 	return nil
 }
 
-func (t Generator) createHeightProfile(lat, lon float64, side float64, processFuncParam interface{},
-	processFunc heightProfileProcessFunc) error {
+func (t Generator) createHeightProfile(lat, lon float64, side float64, stride int,
+	processFuncParam interface{}, processFunc heightProfileProcessFunc) error {
 	i := 0
 
 	side = math.Ceil(side)
 
-	for x := 0; x < int(side); x = x + heightDataResolution {
+	for x := 0; x < int(side); x = x + stride {
 		var newLat, newLon float64
 		geodesic.WGS84.Direct(lat, lon, southAzimuth, float64(x), &newLat, &newLon, nil)
 
-		for y := 0; y < int(side); y = y + heightDataResolution {
+		for y := 0; y < int(side); y = y + stride {
 			var pLat, pLon float64
 			geodesic.WGS84.Direct(newLat, newLon, eastAzimuth, float64(y), &pLat, &pLon, nil)
 
@@ -260,7 +293,7 @@ func (t Generator) createHeightProfile(lat, lon float64, side float64, processFu
 				e = NoElevationData
 			}
 
-			point := &Point{x / heightDataResolution, y / heightDataResolution, pLat, pLon, e}
+			point := &Point{x / stride, y / stride, pLat, pLon, e}
 			err := processFunc(point, processFuncParam, i)
 
 			if err != nil {
