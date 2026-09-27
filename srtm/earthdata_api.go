@@ -1,11 +1,13 @@
 package srtm
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
 
 	log "github.com/sirupsen/logrus"
 )
@@ -22,15 +24,17 @@ type EarthdataApi struct {
 	Username   string
 	Password   string
 	HttpClient *http.Client
-	tokens     []EarthDataToken
+
+	tokensMutex sync.Mutex
+	tokens      []EarthDataToken
 }
 
-func (a EarthdataApi) GenerateToken() (EarthDataToken, error) {
+func (a *EarthdataApi) GenerateToken(ctx context.Context) (EarthDataToken, error) {
 	if a.BaseUrl == "" {
 		a.BaseUrl = defaultEarthDataBaseUrl
 	}
 
-	tokens, err := a.GetAvailableTokens()
+	tokens, err := a.GetAvailableTokens(ctx)
 
 	if err != nil {
 		log.Warnf("Cannot recover available tokens from EarthData API. Cause: %s", err)
@@ -49,7 +53,12 @@ func (a EarthdataApi) GenerateToken() (EarthDataToken, error) {
 
 	url := a.BaseUrl + "/users/token"
 
-	req, _ := http.NewRequest("POST", url, nil)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, nil)
+
+	if err != nil {
+		return token, fmt.Errorf("cannot build EarthData token request. Cause: %w", err)
+	}
+
 	req.SetBasicAuth(a.Username, a.Password)
 
 	resp, err := a.HttpClient.Do(req)
@@ -70,7 +79,7 @@ func (a EarthdataApi) GenerateToken() (EarthDataToken, error) {
 	responseData, err := io.ReadAll(resp.Body)
 
 	if err != nil {
-		return token, nil
+		return token, fmt.Errorf("cannot read EarthData token response. Cause: %w", err)
 	}
 
 	err = json.Unmarshal(responseData, &token)
@@ -82,14 +91,19 @@ func (a EarthdataApi) GenerateToken() (EarthDataToken, error) {
 	return token, nil
 }
 
-func (a EarthdataApi) GetAvailableTokens() ([]EarthDataToken, error) {
+func (a *EarthdataApi) GetAvailableTokens(ctx context.Context) ([]EarthDataToken, error) {
 	if a.BaseUrl == "" {
 		a.BaseUrl = defaultEarthDataBaseUrl
 	}
 
 	url := a.BaseUrl + "/users/tokens"
 
-	req, _ := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+
+	if err != nil {
+		return nil, fmt.Errorf("cannot build EarthData tokens request. Cause: %w", err)
+	}
+
 	req.SetBasicAuth(a.Username, a.Password)
 
 	resp, err := a.HttpClient.Do(req)
@@ -109,7 +123,7 @@ func (a EarthdataApi) GetAvailableTokens() ([]EarthDataToken, error) {
 	responseData, err := io.ReadAll(resp.Body)
 
 	if err != nil {
-		return nil, fmt.Errorf("cannot read EarthData API response from %s", url)
+		return nil, fmt.Errorf("cannot read EarthData API response from %s. Cause: %w", url, err)
 	}
 
 	tokens := []EarthDataToken{}
@@ -119,13 +133,24 @@ func (a EarthdataApi) GetAvailableTokens() ([]EarthDataToken, error) {
 		return nil, errors.New("cannot parse EarthData tokens list response")
 	}
 
+	a.tokensMutex.Lock()
 	a.tokens = tokens
+	a.tokensMutex.Unlock()
 
 	return tokens, nil
 }
 
-func (a EarthdataApi) getValidToken() (EarthDataToken, error) {
-	for _, t := range a.tokens {
+// getValidToken is the only reader of a.tokens (besides GetAvailableTokens
+// itself overwriting it), guarded by the same mutex since a.tokens is shared
+// mutable state: EarthdataApi is normally held as a single instance behind
+// srtm.Downloader.Api and called from many concurrent goroutines (e.g.
+// DownloadAllDemFiles' per-feature downloads).
+func (a *EarthdataApi) getValidToken() (EarthDataToken, error) {
+	a.tokensMutex.Lock()
+	tokens := a.tokens
+	a.tokensMutex.Unlock()
+
+	for _, t := range tokens {
 		if t.isValid() {
 			return t, nil
 		}

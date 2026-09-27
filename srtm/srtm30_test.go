@@ -120,12 +120,18 @@ func TestDownloadZippedDemFileWithCoordinates(t *testing.T) {
 		downloadsMutex:           &sync.Mutex{},
 	}
 
-	path, b, err := d.downloadZippedDemFileWithCoordinates(context.Background(), 27.687619, 86.731679)
+	path, err := d.downloadZippedDemFileWithCoordinates(context.Background(), 27.687619, 86.731679)
 
-	os.Remove(path)
+	defer os.Remove(path)
 
 	if err != nil {
 		t.Errorf("error during hgt file download. cause: %s", err)
+	}
+
+	b, err := os.ReadFile(path)
+
+	if err != nil {
+		t.Fatalf("cannot read downloaded file %s. Cause: %s", path, err)
 	}
 
 	payload, err := os.ReadFile("testdata/files.zip")
@@ -135,7 +141,7 @@ func TestDownloadZippedDemFileWithCoordinates(t *testing.T) {
 	}
 
 	if !bytes.Equal(b, payload) {
-		t.Errorf("returned bytes are different of payload bytes")
+		t.Errorf("downloaded file content is different from the payload bytes")
 	}
 }
 
@@ -155,10 +161,130 @@ func TestDownloadZipFile404(t *testing.T) {
 		downloadsMutex:           &sync.Mutex{},
 	}
 
-	_, _, err := d.downloadZippedDemFileWithCoordinates(context.Background(), 0.0, 0.0)
+	_, err := d.downloadZippedDemFileWithCoordinates(context.Background(), 0.0, 0.0)
 
 	if err != nil && !errors.Is(errors.Unwrap(err), ErrNonExistentDemFile) {
 		t.Errorf("expected %s error but received: %s", ErrNonExistentDemFile, errors.Unwrap(err))
+	}
+}
+
+// erroringReader returns n bytes successfully, then a read error - used to
+// simulate a connection dropping mid-download.
+type erroringReader struct {
+	remaining int
+}
+
+func (r *erroringReader) Read(p []byte) (int, error) {
+	if r.remaining <= 0 {
+		return 0, errors.New("simulated connection drop")
+	}
+
+	n := len(p)
+	if n > r.remaining {
+		n = r.remaining
+	}
+
+	for i := 0; i < n; i++ {
+		p[i] = 'x'
+	}
+
+	r.remaining -= n
+
+	return n, nil
+}
+
+// TestStreamZipHgtFileWithinCapSucceeds is a regression test for the
+// streaming rewrite of downloadZippedDemFile: a download within the size
+// budget is written to disk with its exact content, and no temp file is left
+// behind.
+func TestStreamZipHgtFileWithinCapSucceeds(t *testing.T) {
+	t.Parallel()
+
+	d := Downloader{}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "N00E000.SRTMGL1.hgt.zip")
+
+	content := bytes.Repeat([]byte("a"), 1024)
+
+	if err := d.streamZipHgtFile(path, bytes.NewReader(content), 4096); err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("cannot read streamed file. Cause: %s", err)
+	}
+
+	if !bytes.Equal(got, content) {
+		t.Error("streamed file content does not match the source")
+	}
+
+	assertNoLeftoverTempFiles(t, dir)
+}
+
+// TestStreamZipHgtFileRejectsOversizedDownload is a regression test for the
+// old io.ReadAll(resp.Body) approach having no size limit at all: a source
+// larger than maxBytes must be rejected, not silently truncated and treated
+// as a successful download, and must leave no partial file (temp or final) on
+// disk.
+func TestStreamZipHgtFileRejectsOversizedDownload(t *testing.T) {
+	t.Parallel()
+
+	d := Downloader{}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "N00E000.SRTMGL1.hgt.zip")
+
+	const cap = 1024
+	content := bytes.Repeat([]byte("a"), cap+1)
+
+	err := d.streamZipHgtFile(path, bytes.NewReader(content), cap)
+
+	if err == nil {
+		t.Fatal("expected an error for a download exceeding the size cap, got none")
+	}
+
+	if _, statErr := os.Stat(path); statErr == nil {
+		t.Error("a partial file was left at the final path")
+	}
+
+	assertNoLeftoverTempFiles(t, dir)
+}
+
+// TestStreamZipHgtFileSurfacesReadError is a regression test for a mid-stream
+// read failure (e.g. the server closing the connection early) being surfaced
+// as an error with the partial temp file cleaned up, not silently ignored.
+func TestStreamZipHgtFileSurfacesReadError(t *testing.T) {
+	t.Parallel()
+
+	d := Downloader{}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "N00E000.SRTMGL1.hgt.zip")
+
+	err := d.streamZipHgtFile(path, &erroringReader{remaining: 100}, 4096)
+
+	if err == nil {
+		t.Fatal("expected an error for a source that fails mid-read, got none")
+	}
+
+	if _, statErr := os.Stat(path); statErr == nil {
+		t.Error("a partial file was left at the final path")
+	}
+
+	assertNoLeftoverTempFiles(t, dir)
+}
+
+func assertNoLeftoverTempFiles(t *testing.T, dir string) {
+	t.Helper()
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("cannot list %s. Cause: %s", dir, err)
+	}
+
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".dl-") {
+			t.Errorf("leftover temp download file was not cleaned up: %s", e.Name())
+		}
 	}
 }
 
@@ -175,6 +301,147 @@ func TestUnzip(t *testing.T) {
 
 	if err != nil {
 		t.Errorf("cannot unzip test file. Cause: %s", err)
+	}
+}
+
+// TestUnzipIsTransactional is a regression test for a failure partway through
+// extraction leaving already-extracted entries behind in destFolder: a zip
+// whose second entry is a path-traversal attempt must result in *zero* files
+// published to destFolder, not just the malicious one being skipped - the
+// first (otherwise valid) entry must not have been published either, and no
+// temp extraction directory should be left behind.
+func TestUnzipIsTransactional(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+
+	entry1, err := zw.Create("a.txt")
+	if err != nil {
+		t.Fatalf("cannot create zip entry. Cause: %s", err)
+	}
+	if _, err := entry1.Write([]byte("first")); err != nil {
+		t.Fatalf("cannot write zip entry. Cause: %s", err)
+	}
+
+	entry2, err := zw.Create("../evil.txt")
+	if err != nil {
+		t.Fatalf("cannot create zip entry. Cause: %s", err)
+	}
+	if _, err := entry2.Write([]byte("malicious")); err != nil {
+		t.Fatalf("cannot write zip entry. Cause: %s", err)
+	}
+
+	entry3, err := zw.Create("c.txt")
+	if err != nil {
+		t.Fatalf("cannot create zip entry. Cause: %s", err)
+	}
+	if _, err := entry3.Write([]byte("third")); err != nil {
+		t.Fatalf("cannot write zip entry. Cause: %s", err)
+	}
+
+	if err := zw.Close(); err != nil {
+		t.Fatalf("cannot close zip writer. Cause: %s", err)
+	}
+
+	dir := t.TempDir()
+	zipPath := filepath.Join(dir, "mixed.zip")
+
+	if err := os.WriteFile(zipPath, buf.Bytes(), 0644); err != nil {
+		t.Fatalf("cannot write zip fixture. Cause: %s", err)
+	}
+
+	destDir := filepath.Join(dir, "dest")
+
+	d := Downloader{}
+	_, err = d.unzip(zipPath, destDir)
+
+	if err == nil {
+		t.Fatal("expected an error for a zip containing a path-traversal entry, got none")
+	}
+
+	if _, statErr := os.Stat(filepath.Join(destDir, "a.txt")); statErr == nil {
+		t.Error("the first entry was published to destFolder despite a later entry failing")
+	}
+
+	entries, err := os.ReadDir(destDir)
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatalf("cannot list destFolder. Cause: %s", err)
+	}
+
+	for _, e := range entries {
+		t.Errorf("unexpected leftover entry in destFolder: %s", e.Name())
+	}
+}
+
+// TestUnzipPublishesAllEntriesOnSuccess is the positive counterpart: a fully
+// valid multi-entry (including a nested path) zip must publish every file to
+// its expected final path, with no leftover temp extraction directory.
+func TestUnzipPublishesAllEntriesOnSuccess(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+
+	names := []string{"a.txt", "nested/b.txt", "c.txt"}
+
+	for _, name := range names {
+		w, err := zw.Create(name)
+		if err != nil {
+			t.Fatalf("cannot create zip entry. Cause: %s", err)
+		}
+		if _, err := w.Write([]byte(name)); err != nil {
+			t.Fatalf("cannot write zip entry. Cause: %s", err)
+		}
+	}
+
+	if err := zw.Close(); err != nil {
+		t.Fatalf("cannot close zip writer. Cause: %s", err)
+	}
+
+	dir := t.TempDir()
+	zipPath := filepath.Join(dir, "multi.zip")
+
+	if err := os.WriteFile(zipPath, buf.Bytes(), 0644); err != nil {
+		t.Fatalf("cannot write zip fixture. Cause: %s", err)
+	}
+
+	destDir := filepath.Join(dir, "dest")
+
+	d := Downloader{}
+	files, err := d.unzip(zipPath, destDir)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+
+	if len(files) != len(names) {
+		t.Fatalf("expected %d published files, got %d", len(names), len(files))
+	}
+
+	for _, name := range names {
+		want := filepath.Join(destDir, filepath.FromSlash(name))
+
+		b, err := os.ReadFile(want)
+		if err != nil {
+			t.Errorf("cannot read published entry %s. Cause: %s", want, err)
+			continue
+		}
+
+		if string(b) != name {
+			t.Errorf("entry %s content mismatch: got %q, want %q", want, string(b), name)
+		}
+	}
+
+	entries, err := os.ReadDir(destDir)
+	if err != nil {
+		t.Fatalf("cannot list destFolder. Cause: %s", err)
+	}
+
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".unzip-") {
+			t.Errorf("leftover temp extraction dir was not cleaned up: %s", e.Name())
+		}
 	}
 }
 
@@ -364,7 +631,7 @@ func TestDownloadZippedDemFileUsesConfiguredHttpClient(t *testing.T) {
 		downloadsMutex:           &sync.Mutex{},
 	}
 
-	path, _, err := d.downloadZippedDemFileWithCoordinates(context.Background(), 27.687619, 86.731679)
+	path, err := d.downloadZippedDemFileWithCoordinates(context.Background(), 27.687619, 86.731679)
 	os.Remove(path)
 
 	if err != nil {
@@ -392,7 +659,7 @@ func TestDownloadZippedDemFileFallsBackWhenHttpClientIsNil(t *testing.T) {
 		downloadsMutex:           &sync.Mutex{},
 	}
 
-	path, _, err := d.downloadZippedDemFileWithCoordinates(context.Background(), 27.687619, 86.731679)
+	path, err := d.downloadZippedDemFileWithCoordinates(context.Background(), 27.687619, 86.731679)
 	os.Remove(path)
 
 	if err != nil {
@@ -489,7 +756,7 @@ func TestDownloadZippedDemFileReleasesMutexOnAllPaths(t *testing.T) {
 				downloadsMutex:           &sync.Mutex{},
 			}
 
-			path, _, _ := d.downloadZippedDemFileWithCoordinates(context.Background(), tt.lat, tt.lon)
+			path, _ := d.downloadZippedDemFileWithCoordinates(context.Background(), tt.lat, tt.lon)
 			if path != "" {
 				os.Remove(path)
 			}
@@ -540,7 +807,7 @@ func TestDownloadZippedDemFileSecondCallAfterTokenFailureDoesNotBlock(t *testing
 
 	const lat, lon = 6.0, 6.0
 
-	if _, _, err := d.downloadZippedDemFileWithCoordinates(context.Background(), lat, lon); err == nil {
+	if _, err := d.downloadZippedDemFileWithCoordinates(context.Background(), lat, lon); err == nil {
 		t.Fatal("expected an error from the first call against a broken token server, got none")
 	}
 
@@ -548,7 +815,7 @@ func TestDownloadZippedDemFileSecondCallAfterTokenFailureDoesNotBlock(t *testing
 
 	go func() {
 		defer close(done)
-		_, _, _ = d.downloadZippedDemFileWithCoordinates(context.Background(), lat, lon)
+		_, _ = d.downloadZippedDemFileWithCoordinates(context.Background(), lat, lon)
 	}()
 
 	select {
@@ -602,7 +869,7 @@ func TestDownloadZippedDemFileCancelsPromptly(t *testing.T) {
 	start := time.Now()
 
 	go func() {
-		_, _, err := d.downloadZippedDemFileWithCoordinates(ctx, 7.0, 7.0)
+		_, err := d.downloadZippedDemFileWithCoordinates(ctx, 7.0, 7.0)
 		done <- err
 	}()
 
@@ -676,6 +943,11 @@ func TestDownloadAllDemFilesCountsEveryFeature(t *testing.T) {
 	var downloadCount int64
 
 	testSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "GET" && strings.Contains(r.URL.Path, "/users/tokens") {
+			json.NewEncoder(w).Encode(tokens)
+			return
+		}
+
 		if r.Method == "POST" && strings.Contains(r.URL.Path, "/users/token") {
 			json.NewEncoder(w).Encode(tokens[0])
 			return
@@ -702,12 +974,18 @@ func TestDownloadAllDemFilesCountsEveryFeature(t *testing.T) {
 		HttpClient: http.DefaultClient,
 	}
 
-	if err := d.DownloadAllDemFiles(); err != nil {
+	result, err := d.DownloadAllDemFiles(context.Background())
+
+	if err != nil {
 		t.Fatalf("unexpected error: %s", err)
 	}
 
 	if atomic.LoadInt64(&downloadCount) != featureCount {
 		t.Errorf("expected %d downloads, got %d", featureCount, downloadCount)
+	}
+
+	if result.Total != featureCount || result.Succeeded != featureCount || result.Failed != 0 {
+		t.Errorf("expected Total=%d, Succeeded=%d, Failed=0, got %+v", featureCount, featureCount, result)
 	}
 }
 
@@ -740,20 +1018,32 @@ func TestDownloadAllDemFilesWaitsOnFailures(t *testing.T) {
 		HttpClient: http.DefaultClient,
 	}
 
-	done := make(chan error, 1)
+	type outcome struct {
+		result DemDownloadResult
+		err    error
+	}
+
+	done := make(chan outcome, 1)
 
 	go func() {
-		done <- d.DownloadAllDemFiles()
+		result, err := d.DownloadAllDemFiles(context.Background())
+		done <- outcome{result, err}
 	}()
 
+	var o outcome
+
 	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("unexpected error: %s", err)
+	case o = <-done:
+		if o.err != nil {
+			t.Fatalf("unexpected error: %s", o.err)
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("DownloadAllDemFiles did not return: a batch's WaitGroup is likely stuck " +
 			"waiting on a goroutine that never called wg.Done()")
+	}
+
+	if o.result.Failed != 5 || o.result.Succeeded != 0 {
+		t.Errorf("expected Failed=5, Succeeded=0, got %+v", o.result)
 	}
 
 	// No file should have been extracted, since every download failed.
@@ -768,5 +1058,94 @@ func TestDownloadAllDemFilesWaitsOnFailures(t *testing.T) {
 		}
 
 		t.Errorf("unexpected file extracted after only failed downloads: %s", e.Name())
+	}
+}
+
+// TestDownloadAllDemFilesCancellation is a regression test for
+// DownloadAllDemFiles having no way to stop in-progress work: it starts a
+// real (unseeded) run over 130 features (spanning two 100-item batches),
+// cancels the context shortly after starting, and checks the run stops
+// promptly instead of running to completion, and that the result honestly
+// reflects only part of the batch was attempted.
+func TestDownloadAllDemFilesCancellation(t *testing.T) {
+	dir := t.TempDir()
+
+	const featureCount = 130 // spans more than one 100-item batch
+	bboxPath := buildBboxFixture(t, dir, featureCount)
+	t.Setenv("LUKLA_SRTM30M_BBOX_FILE", bboxPath)
+
+	slowServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "GET" && strings.Contains(r.URL.Path, "/users/tokens") {
+			json.NewEncoder(w).Encode(tokens)
+			return
+		}
+
+		if r.Method == "POST" && strings.Contains(r.URL.Path, "/users/token") {
+			json.NewEncoder(w).Encode(tokens[0])
+			return
+		}
+
+		// Simulate a slow server for the actual file downloads, giving
+		// cancellation a window to abort in-flight requests.
+		time.Sleep(200 * time.Millisecond)
+
+		b, err := os.ReadFile("testdata/files.zip")
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+
+		w.Write(b)
+	}))
+	defer slowServer.Close()
+
+	earthdataApi := &EarthdataApi{BaseUrl: slowServer.URL, HttpClient: http.DefaultClient}
+
+	d := Downloader{
+		BasePath:   slowServer.URL,
+		Dir:        dir,
+		Api:        earthdataApi,
+		HttpClient: http.DefaultClient,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	type outcome struct {
+		result DemDownloadResult
+		err    error
+	}
+
+	done := make(chan outcome, 1)
+
+	go func() {
+		result, err := d.DownloadAllDemFiles(ctx)
+		done <- outcome{result, err}
+	}()
+
+	time.Sleep(50 * time.Millisecond) // let the batch actually start
+	cancel()
+
+	var o outcome
+
+	select {
+	case o = <-done:
+		if o.err != nil {
+			t.Fatalf("unexpected structural error: %s", o.err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("DownloadAllDemFiles did not return promptly after cancellation")
+	}
+
+	if !o.result.Canceled {
+		t.Error("expected Canceled to be true")
+	}
+
+	if o.result.Total != featureCount {
+		t.Errorf("expected Total %d, got %d", featureCount, o.result.Total)
+	}
+
+	if o.result.Succeeded+o.result.Failed >= o.result.Total {
+		t.Errorf("expected cancellation to prevent at least some features from being attempted, "+
+			"got Succeeded=%d, Failed=%d, Total=%d", o.result.Succeeded, o.result.Failed, o.result.Total)
 	}
 }

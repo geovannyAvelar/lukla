@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -182,6 +183,46 @@ func TestHandleHealth(t *testing.T) {
 	}
 }
 
+// TestValidateCoordinatesRejectsNonFinite is a direct unit test of
+// validateCoordinates for NaN/Inf, independent of any HTTP transport. It's
+// deliberately not exercised only through the JSON request body of
+// POST /heightmap/points: encoding/json already refuses to unmarshal literal
+// "NaN"/"Infinity" tokens (invalid JSON syntax) and out-of-range numeric
+// literals like 1e400 (returns a json.UnmarshalTypeError before
+// validateCoordinates ever runs) - see handleHeightmapProfile, which returns
+// 400 on that error already. So the JSON body path was never actually
+// reachable with a non-finite float64; the real gap was the query-string path
+// (?lat=NaN), covered by TestParseSquareCoordinatesValidation below. This test
+// still exercises validateCoordinates directly, since a future caller (or a
+// change to how points are decoded) could reach it with a non-finite value.
+func TestValidateCoordinatesRejectsNonFinite(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		lat  float64
+		lon  float64
+	}{
+		{"lat is NaN", math.NaN(), 0},
+		{"lon is NaN", 0, math.NaN()},
+		{"lat is +Inf", math.Inf(1), 0},
+		{"lat is -Inf", math.Inf(-1), 0},
+		{"lon is +Inf", 0, math.Inf(1)},
+		{"lon is -Inf", 0, math.Inf(-1)},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if err := validateCoordinates(tt.lat, tt.lon); err == nil {
+				t.Errorf("expected an error for lat=%v, lon=%v, got none", tt.lat, tt.lon)
+			}
+		})
+	}
+}
+
 func TestParseSquareCoordinatesValidation(t *testing.T) {
 	t.Parallel()
 
@@ -197,6 +238,16 @@ func TestParseSquareCoordinatesValidation(t *testing.T) {
 		{"lon too high", "0", "181", true},
 		{"lon too low", "0", "-181", true},
 		{"not a number", "abc", "0", true},
+		{"lat at lower boundary", "-90", "0", false},
+		{"lat at upper boundary", "90", "0", false},
+		{"lon at lower boundary", "0", "-180", false},
+		{"lon at upper boundary", "0", "180", false},
+		{"lat is NaN", "NaN", "0", true},
+		{"lon is NaN", "0", "NaN", true},
+		{"lat is +Inf", "+Inf", "0", true},
+		{"lat is -Inf", "-Inf", "0", true},
+		{"lon is +Inf", "0", "+Inf", true},
+		{"lon is -Inf", "0", "-Inf", true},
 	}
 
 	a := HttpApi{}

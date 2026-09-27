@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"os/signal"
@@ -365,10 +366,22 @@ func (a HttpApi) parseTileResolution(r *http.Request) (int, error) {
 	return resolution, nil
 }
 
+// validateCoordinates rejects non-finite values explicitly before the range
+// checks below: strconv.ParseFloat happily parses "NaN"/"Inf"/"+Inf"/"-Inf"
+// with no error, and NaN's IEEE-754 property that every comparison (<, >) is
+// false means a bare range check silently accepts it.
 func validateCoordinates(lat, lon float64) error {
+	if math.IsNaN(lat) || math.IsInf(lat, 0) {
+		return errors.New("invalid latitude: must be a finite number")
+	}
+
 	if lat < minLatitude || lat > maxLatitude {
 		msg := fmt.Sprintf("invalid latitude: must be between %.0f and %.0f", minLatitude, maxLatitude)
 		return errors.New(msg)
+	}
+
+	if math.IsNaN(lon) || math.IsInf(lon, 0) {
+		return errors.New("invalid longitude: must be a finite number")
 	}
 
 	if lon < minLongitude || lon > maxLongitude {

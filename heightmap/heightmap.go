@@ -84,30 +84,65 @@ type Generator struct {
 	SrtmDownloader   *srtm.Downloader
 	Dir              string
 
-	tileLocks      map[string]*sync.Mutex
+	tileLocks      map[string]*tileLock
 	tileLocksMutex sync.Mutex
 }
 
-// tileLockFor returns the mutex guarding a specific tile's generation, lazily
-// creating it on first use. Concurrent requests for the same tile key block on
-// this mutex instead of independently repeating the expensive generation work;
-// requests for different keys are unaffected by each other.
-func (t *Generator) tileLockFor(key string) *sync.Mutex {
+// tileLock is a reference-counted mutex: refs tracks how many goroutines
+// currently hold or are waiting for it, so the owning Generator can safely
+// delete its map entry once the count drops back to zero - and only then,
+// never while a waiter still holds a reference to it.
+type tileLock struct {
+	mu   sync.Mutex
+	refs int
+}
+
+// acquireTileLock locks (creating it on first use) the mutex guarding a
+// specific tile's generation and returns it for release via releaseTileLock.
+// Concurrent requests for the same tile key block on this mutex instead of
+// independently repeating the expensive generation work; requests for
+// different keys are unaffected by each other. Unlike a plain
+// map[string]*sync.Mutex, entries here don't accumulate forever: see
+// releaseTileLock.
+func (t *Generator) acquireTileLock(key string) *tileLock {
 	t.tileLocksMutex.Lock()
-	defer t.tileLocksMutex.Unlock()
 
 	if t.tileLocks == nil {
-		t.tileLocks = make(map[string]*sync.Mutex)
+		t.tileLocks = make(map[string]*tileLock)
 	}
 
-	mu, ok := t.tileLocks[key]
+	lock, ok := t.tileLocks[key]
 
 	if !ok {
-		mu = &sync.Mutex{}
-		t.tileLocks[key] = mu
+		lock = &tileLock{}
+		t.tileLocks[key] = lock
 	}
 
-	return mu
+	lock.refs++
+
+	t.tileLocksMutex.Unlock()
+
+	lock.mu.Lock()
+
+	return lock
+}
+
+// releaseTileLock unlocks a tileLock obtained from acquireTileLock and removes
+// its map entry once no goroutine still holds or is waiting for it (refs == 0),
+// bounding tileLocks' size to the number of tiles currently in flight rather
+// than every distinct tile ever requested over the process's lifetime.
+func (t *Generator) releaseTileLock(key string, lock *tileLock) {
+	lock.mu.Unlock()
+
+	t.tileLocksMutex.Lock()
+
+	lock.refs--
+
+	if lock.refs == 0 {
+		delete(t.tileLocks, key)
+	}
+
+	t.tileLocksMutex.Unlock()
 }
 
 type ResolutionConfig struct {
@@ -141,9 +176,8 @@ func (t *Generator) GetTileHeightmap(ctx context.Context, z, x, y, resolution in
 
 	key := formatTilePath(t.Dir, x, y, z, resolution)
 
-	mu := t.tileLockFor(key)
-	mu.Lock()
-	defer mu.Unlock()
+	lock := t.acquireTileLock(key)
+	defer t.releaseTileLock(key, lock)
 
 	byteArray, err := t.getTileFromDisk(x, y, z, resolution)
 
@@ -239,11 +273,17 @@ func (t *Generator) CreateHeightMapImage(ctx context.Context, lat, lon float64, 
 	}
 
 	stride := samplingStride(side, conf)
-	step := int(side) / stride
 
-	if step >= 100 {
-		step -= 100
-	}
+	// step is the number of samples createHeightProfile will actually produce
+	// along each axis: ceil(side/stride), matching its loop condition
+	// `x < int(side)` (a half-open interval - side itself is excluded, see
+	// createHeightProfile's doc comment). Floor division here used to
+	// under-count whenever side wasn't an exact multiple of stride, and
+	// image.RGBA.Set silently drops any sample landing outside an
+	// under-sized buffer instead of erroring, so the overshoot sample(s)
+	// were being discarded rather than rendered. The buffer is sized to
+	// exactly the samples that will be written - no other adjustment.
+	step := (int(side) + stride - 1) / stride
 
 	upLeft := image.Point{}
 	lowRight := image.Point{X: step, Y: step}
@@ -390,13 +430,20 @@ dispatch:
 }
 
 // createHeightProfile samples the DEM over a lat/lon square and invokes
-// processFunc once per sample. It returns the number of samples whose
-// processFunc call returned an error (logged individually, but otherwise
-// non-fatal - the profile keeps going) so callers can surface that a profile
-// "succeeded" only partially, instead of it being silently discarded as it
-// was before. It checks ctx before each sample and returns ctx.Err() early if
-// canceled, so an in-progress profile stops promptly instead of running to
-// completion after the caller has stopped waiting for it.
+// processFunc once per sample. The sampled square is the half-open interval
+// [0, side) in both axes - a sample is taken at offsets 0, stride, 2*stride,
+// ... up to but excluding side itself (the loop condition is `x < int(side)`),
+// so side is an exclusive geographic bound, not an inclusive one. The caller
+// (CreateHeightMapImage) sizes its output buffer to match this exactly via
+// ceil(side/stride); see its `step` comment.
+//
+// It returns the number of samples whose processFunc call returned an error
+// (logged individually, but otherwise non-fatal - the profile keeps going) so
+// callers can surface that a profile "succeeded" only partially, instead of it
+// being silently discarded as it was before. It checks ctx before each sample
+// and returns ctx.Err() early if canceled, so an in-progress profile stops
+// promptly instead of running to completion after the caller has stopped
+// waiting for it.
 func (t *Generator) createHeightProfile(ctx context.Context, lat, lon float64, side float64, stride int,
 	processFuncParam interface{}, processFunc heightProfileProcessFunc) (failedPoints int, err error) {
 	i := 0

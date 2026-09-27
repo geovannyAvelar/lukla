@@ -322,6 +322,97 @@ func TestCreateHeightMapImagePNG(t *testing.T) {
 	}
 }
 
+// TestCreateHeightMapImageDefaultSizeMatchesRequestedResolution is a direct
+// regression test for the `step -= 100` bug: with the API's own defaults
+// (side=10000, resolution=256, no ForceInterpolation), the old code computed a
+// native step of 256, then unconditionally shrunk it to 156 (>=100 triggered
+// the hack), and since 256 was never < 156 the resize never fired either - so
+// /heightmap's default call silently returned a 156x156 image instead of the
+// requested 256x256.
+func TestCreateHeightMapImageDefaultSizeMatchesRequestedResolution(t *testing.T) {
+	t.Parallel()
+
+	h, err := hgt.OpenDataDir(demDatasetDir, nil)
+	if err != nil {
+		t.Fatalf("cannot open DEM dir. Cause: %s", err)
+	}
+	defer h.Close()
+
+	gen := Generator{ElevationDataset: h}
+
+	const side = 10000.0
+	conf := ResolutionConfig{Width: 256, Height: 256}
+
+	b, err := gen.CreateHeightMapImage(context.Background(), 27.687397, 86.731814, side, conf)
+	if err != nil {
+		t.Fatalf("cannot create heightmap image. Cause: %s", err)
+	}
+
+	img, err := png.Decode(bytes.NewReader(b))
+	if err != nil {
+		t.Fatalf("response is not a valid PNG. Cause: %s", err)
+	}
+
+	bounds := img.Bounds()
+	if bounds.Dx() != 256 || bounds.Dy() != 256 {
+		t.Errorf("expected a 256x256 image (matching the requested resolution), got %dx%d",
+			bounds.Dx(), bounds.Dy())
+	}
+}
+
+// TestCreateHeightMapImageNativeStepMatchesSampleCount checks the native
+// (unresized) buffer dimensions directly against ceil(side/stride) - the
+// number of samples createHeightProfile will actually produce - across step
+// values below, exactly at, and above 100, the boundary the old `step -= 100`
+// hack keyed off. At exactly 100 the old code produced a 0x0 image.
+func TestCreateHeightMapImageNativeStepMatchesSampleCount(t *testing.T) {
+	t.Parallel()
+
+	h, err := hgt.OpenDataDir(demDatasetDir, nil)
+	if err != nil {
+		t.Fatalf("cannot open DEM dir. Cause: %s", err)
+	}
+	defer h.Close()
+
+	gen := Generator{ElevationDataset: h}
+
+	tests := []struct {
+		name string
+		side float64
+		want int
+	}{
+		{"step below 100", 2100.0, 70},
+		{"step exactly 100 (old code produced a 0x0 image here)", 3000.0, 100},
+		{"step above 100", 3010.0, 101},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			// No resolution requested, so the returned image is the native,
+			// unresized buffer - its dimensions directly reflect the step
+			// calculation under test.
+			b, err := gen.CreateHeightMapImage(context.Background(), 27.687397, 86.731814, tt.side,
+				ResolutionConfig{})
+			if err != nil {
+				t.Fatalf("cannot create heightmap image. Cause: %s", err)
+			}
+
+			img, err := png.Decode(bytes.NewReader(b))
+			if err != nil {
+				t.Fatalf("response is not a valid PNG. Cause: %s", err)
+			}
+
+			bounds := img.Bounds()
+			if bounds.Dx() != tt.want || bounds.Dy() != tt.want {
+				t.Errorf("expected a %dx%d image, got %dx%d", tt.want, tt.want, bounds.Dx(), bounds.Dy())
+			}
+		})
+	}
+}
+
 func TestGenerateAllTilesInZoomLevelRejectsZoomAboveLimit(t *testing.T) {
 	t.Parallel()
 
@@ -666,6 +757,57 @@ func TestSamplingStrideNativeResolutionPreservesDetail(t *testing.T) {
 	}
 }
 
+// TestSamplingStrideTradeoffAcrossRegimes puts side-by-side, in one test, the
+// two regimes documented on samplingStride's doc comment: a small-area
+// request that stays at native resolution (no detail lost, per
+// TestSamplingStrideNativeResolutionPreservesDetail above) versus a
+// real-world OSM-tile-scale request that necessarily coarsens - matching the
+// sampling density to the resolution actually being asked for, not
+// discarding otherwise-visible detail (the OOM scenario covered by
+// TestCreateHeightMapImageBoundedForLargeArea below). Round 2 already
+// established both claims separately; this confirms they hold together and
+// that step's `step` calculation fix doesn't change samplingStride's own
+// numbers.
+func TestSamplingStrideTradeoffAcrossRegimes(t *testing.T) {
+	t.Parallel()
+
+	conf := ResolutionConfig{Width: 256, Height: 256}
+
+	const smallSide = 2251.0    // a typical /heightmap or high-zoom tile request
+	const hugeSide = 20037500.0 // an OSM zoom-1 tile's real-world side
+
+	nativeStride := samplingStride(smallSide, conf)
+	coarsenedStride := samplingStride(hugeSide, conf)
+
+	if nativeStride != int(heightDataResolution) {
+		t.Errorf("expected the small-area request to stay at the native %dm stride, got %dm",
+			int(heightDataResolution), nativeStride)
+	}
+
+	if coarsenedStride <= int(heightDataResolution) {
+		t.Errorf("expected the huge-area request to coarsen past the native %dm stride, got %dm",
+			int(heightDataResolution), coarsenedStride)
+	}
+
+	// Both still produce a native sample count close to the requested
+	// resolution, not to the real-world area in meters - that's the point of
+	// coarsening: it trades ground resolution for a bounded, predictable
+	// sample count instead of discarding data arbitrarily.
+	smallStep := (int(smallSide) + nativeStride - 1) / nativeStride
+	hugeStep := (int(hugeSide) + coarsenedStride - 1) / coarsenedStride
+
+	if hugeStep < conf.Width || hugeStep > conf.Width+1 {
+		t.Errorf("expected the coarsened regime's native step (%d) to land within 1 sample of "+
+			"the requested resolution (%d), proving detail is matched to what can be displayed, "+
+			"not discarded arbitrarily", hugeStep, conf.Width)
+	}
+
+	t.Logf("native regime:     side=%.0fm stride=%dm/px step=%d samples/axis",
+		smallSide, nativeStride, smallStep)
+	t.Logf("coarsened regime:  side=%.0fm stride=%dm/px step=%d samples/axis",
+		hugeSide, coarsenedStride, hugeStep)
+}
+
 // TestCreateHeightMapImageBoundedForLargeArea is a direct regression test for
 // the OOM: a ~20,037,500m-wide area (roughly an OSM zoom-1 tile) with a
 // normal 256x256 resolution request used to attempt a ~668,000x668,000 native
@@ -904,6 +1046,57 @@ func TestGetTileHeightmapDifferentTilesRunConcurrently(t *testing.T) {
 		t.Errorf("%d concurrent requests for DIFFERENT tiles took %s (one generation took %s); "+
 			"expected them to run in parallel (up to %s), not be serialized by a shared lock",
 			concurrency, batchDuration, singleDuration, maxExpected)
+	}
+}
+
+// TestTileLocksDoNotLeak is a regression test for tileLocks growing without
+// bound: after many concurrent requests across several distinct tile keys
+// (including repeats of the same keys, to exercise the refcounting) all
+// complete, no entries should remain in the map - each key's refcount should
+// have dropped back to zero and been cleaned up, not accumulated forever.
+func TestTileLocksDoNotLeak(t *testing.T) {
+	t.Parallel()
+
+	h, err := hgt.OpenDataDir(demDatasetDir, nil)
+	if err != nil {
+		t.Fatalf("cannot open DEM dir. Cause: %s", err)
+	}
+	defer h.Close()
+
+	gen := Generator{ElevationDataset: h, Dir: t.TempDir()}
+
+	const zoom = 10
+	const resolution = 256
+	const distinctKeys = 5
+	const requestsPerKey = 6 // > 1 so multiple goroutines share the same key
+
+	var wg sync.WaitGroup
+
+	for i := 0; i < distinctKeys; i++ {
+		i := i
+
+		for j := 0; j < requestsPerKey; j++ {
+			wg.Add(1)
+
+			go func() {
+				defer wg.Done()
+
+				if _, err := gen.GetTileHeightmap(context.Background(), zoom, i, i, resolution); err != nil {
+					t.Errorf("unexpected error for tile (%d, %d, %d): %s", i, i, zoom, err)
+				}
+			}()
+		}
+	}
+
+	wg.Wait()
+
+	gen.tileLocksMutex.Lock()
+	remaining := len(gen.tileLocks)
+	gen.tileLocksMutex.Unlock()
+
+	if remaining != 0 {
+		t.Errorf("expected tileLocks to be empty after all requests completed, found %d leftover entries",
+			remaining)
 	}
 }
 

@@ -1,10 +1,14 @@
 package cmd
 
 import (
+	"context"
+	"os"
+	"os/signal"
+	"syscall"
+
 	"github.com/petoc/hgt"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
-	"os"
 )
 
 func CreateSrtmCommand() *cobra.Command {
@@ -53,10 +57,23 @@ func downloadAllSrtmFiles(cmd *cobra.Command, args []string) {
 	earthdataApi := createEarthdataApiClient(httpClient)
 	srtmDownloader := createSrtmDownloader(httpClient, earthdataApi)
 
-	err := srtmDownloader.DownloadAllDemFiles()
+	// Ctrl+C (or a SIGTERM, e.g. from a container orchestrator) now stops the
+	// download gracefully - in-flight granules finish or abort cleanly via
+	// ctx, instead of the process being killed mid-write.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	result, err := srtmDownloader.DownloadAllDemFiles(ctx)
 
 	if err != nil {
 		log.Errorf("Cannot download SRTM30m dataset. Cause: %s", err)
+		os.Exit(1)
+	}
+
+	log.Infof("Download finished: %d/%d succeeded, %d failed, canceled=%t",
+		result.Succeeded, result.Total, result.Failed, result.Canceled)
+
+	if result.Failed > 0 {
 		os.Exit(1)
 	}
 }

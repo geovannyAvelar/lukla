@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	env "github.com/geovannyAvelar/lukla/env"
@@ -73,7 +74,7 @@ func (d *Downloader) DownloadDemFile(ctx context.Context, pLat, pLon float64) (s
 	demFilePath = strings.ReplaceAll(demFilePath, ".SRTMGL1", "")
 
 	if !d.checkIfDemFileExists(demFilePath) {
-		zipPath, _, err := d.downloadZippedDemFileWithCoordinates(ctx, pLat, pLon)
+		zipPath, err := d.downloadZippedDemFileWithCoordinates(ctx, pLat, pLon)
 
 		if err != nil {
 			return "", fmt.Errorf("cannot download HGT file for coordinates %f, %f. "+
@@ -86,7 +87,28 @@ func (d *Downloader) DownloadDemFile(ctx context.Context, pLat, pLon float64) (s
 	return demFilePath, nil
 }
 
-func (d *Downloader) DownloadAllDemFiles() error {
+// DemDownloadResult summarizes the outcome of a DownloadAllDemFiles run. Total
+// is the intended batch size (the number of features in the bounding-box
+// dataset), known upfront. Succeeded and Failed only count granules actually
+// attempted, so Succeeded+Failed <= Total; when the run was canceled partway
+// through (Canceled == true), the gap between Total and Succeeded+Failed is
+// the number of granules that were never even dispatched. Mirrors
+// heightmap.TileGenerationResult, the same contract used for
+// GenerateAllTilesInZoomLevel.
+type DemDownloadResult struct {
+	Total     int  `json:"total"`
+	Succeeded int  `json:"succeeded"`
+	Failed    int  `json:"failed"`
+	Canceled  bool `json:"canceled,omitempty"`
+}
+
+// DownloadAllDemFiles downloads and unzips every granule in the SRTM bounding
+// box dataset. The returned error is only set for a structural failure (the
+// bounding box dataset itself couldn't be loaded) that means no work was
+// attempted at all; once the run starts, its outcome - including a partial
+// failure or an early stop from ctx being canceled - is fully described by
+// the returned DemDownloadResult.
+func (d *Downloader) DownloadAllDemFiles(ctx context.Context) (DemDownloadResult, error) {
 	if d.BasePath == "" {
 		d.BasePath = defaultSRTMServerURL
 	}
@@ -96,16 +118,20 @@ func (d *Downloader) DownloadAllDemFiles() error {
 	err := d.loadDatasetBbox()
 
 	if err != nil {
-		return err
+		return DemDownloadResult{}, err
 	}
 
+	total := len(d.datasetBbox.Features)
 	chunks := partitionSlice(d.datasetBbox.Features, 100)
 
-	var c int64
-	var counterMutex sync.Mutex
-	total := len(d.datasetBbox.Features)
+	var succeeded, failed int64
 
+chunkLoop:
 	for _, chunk := range chunks {
+		if ctx.Err() != nil {
+			break chunkLoop
+		}
+
 		var wg sync.WaitGroup
 
 		for _, feature := range chunk {
@@ -116,13 +142,13 @@ func (d *Downloader) DownloadAllDemFiles() error {
 
 				filename := feature.Properties.MustString("dataFile")
 				url := tileUrl(d.BasePath, filename)
-				// DownloadAllDemFiles is a one-shot CLI bulk download, not
-				// part of any per-request tile batch, so it has no natural
-				// cancellation source.
-				path, _, err := d.downloadZippedDemFile(context.Background(), url)
+				path, err := d.downloadZippedDemFile(ctx, url)
 
 				if err != nil {
 					log.Errorf("cannot download HGT file %s. Cause %s", url, err)
+					atomic.AddInt64(&failed, 1)
+					n := atomic.LoadInt64(&succeeded) + atomic.LoadInt64(&failed)
+					log.Infof("%d / %d file(s) processed", n, total)
 					return
 				}
 
@@ -130,13 +156,14 @@ func (d *Downloader) DownloadAllDemFiles() error {
 
 				if err != nil {
 					log.Errorf("cannot unzip file %s. Cause %s", url, err)
+					atomic.AddInt64(&failed, 1)
+					n := atomic.LoadInt64(&succeeded) + atomic.LoadInt64(&failed)
+					log.Infof("%d / %d file(s) processed", n, total)
+					return
 				}
 
-				counterMutex.Lock()
-				c++
-				n := c
-				counterMutex.Unlock()
-
+				atomic.AddInt64(&succeeded, 1)
+				n := atomic.LoadInt64(&succeeded) + atomic.LoadInt64(&failed)
 				log.Infof("%d / %d file(s) downloaded", n, total)
 			}(feature)
 		}
@@ -144,10 +171,15 @@ func (d *Downloader) DownloadAllDemFiles() error {
 		wg.Wait()
 	}
 
-	return nil
+	return DemDownloadResult{
+		Total:     total,
+		Succeeded: int(atomic.LoadInt64(&succeeded)),
+		Failed:    int(atomic.LoadInt64(&failed)),
+		Canceled:  ctx.Err() != nil,
+	}, nil
 }
 
-func (d *Downloader) downloadZippedDemFileWithCoordinates(ctx context.Context, lat, lon float64) (string, []byte, error) {
+func (d *Downloader) downloadZippedDemFileWithCoordinates(ctx context.Context, lat, lon float64) (string, error) {
 	if d.BasePath == "" {
 		d.BasePath = defaultSRTMServerURL
 	}
@@ -155,7 +187,7 @@ func (d *Downloader) downloadZippedDemFileWithCoordinates(ctx context.Context, l
 	filename := generateZipDemFileName(lat, lon)
 
 	if d.isZipFileNonExistent(filename) {
-		return "", nil, ErrNonExistentDemFile
+		return "", ErrNonExistentDemFile
 	}
 
 	url := tileUrl(d.BasePath, filename)
@@ -171,7 +203,13 @@ func tileUrl(basePath, filename string) string {
 	return basePath + "/" + granuleDir + "/" + filename
 }
 
-func (d *Downloader) downloadZippedDemFile(ctx context.Context, url string) (string, []byte, error) {
+// maxDownloadBytes bounds a single SRTM granule download. Real SRTMGL1
+// .hgt.zip files are a few MB to ~30MB depending on terrain roughness; this is
+// a generous ceiling against a misbehaving or malicious response, not a tight
+// fit.
+const maxDownloadBytes = 200 << 20 // 200 MiB
+
+func (d *Downloader) downloadZippedDemFile(ctx context.Context, url string) (string, error) {
 	filename := filepath.Base(url)
 
 	d.downloadsMutex.Lock()
@@ -190,19 +228,13 @@ func (d *Downloader) downloadZippedDemFile(ctx context.Context, url string) (str
 	demFilepath := d.Dir + filePathSep + filename
 
 	if d.checkIfDemFileExists(demFilepath) {
-		b, err := os.ReadFile(demFilepath)
-
-		if err != nil {
-			return "", nil, fmt.Errorf("cannot read %s file. cause: %w", demFilepath, err)
-		}
-
-		return demFilepath, b, nil
+		return demFilepath, nil
 	}
 
-	token, err := d.Api.GenerateToken()
+	token, err := d.Api.GenerateToken(ctx)
 
 	if err != nil {
-		return "", nil, fmt.Errorf("cannot generate EarthData API token. Cause %w", err)
+		return "", fmt.Errorf("cannot generate EarthData API token. Cause %w", err)
 	}
 
 	client := d.HttpClient
@@ -214,7 +246,7 @@ func (d *Downloader) downloadZippedDemFile(ctx context.Context, url string) (str
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 
 	if err != nil {
-		return "", nil, fmt.Errorf("cannot build request for %s. Cause: %w", url, err)
+		return "", fmt.Errorf("cannot build request for %s. Cause: %w", url, err)
 	}
 
 	req.Header.Add("Authorization", "Bearer "+token.AccessToken)
@@ -228,7 +260,7 @@ func (d *Downloader) downloadZippedDemFile(ctx context.Context, url string) (str
 	if err != nil {
 		err := fmt.Errorf("cannot download hgt file %s. Cause: %w", filename, err)
 		log.Errorf(err.Error())
-		return "", nil, err
+		return "", err
 	}
 
 	defer resp.Body.Close()
@@ -243,41 +275,72 @@ func (d *Downloader) downloadZippedDemFile(ctx context.Context, url string) (str
 
 			err := fmt.Errorf("received a %d error during file %s request. Cause %w",
 				resp.StatusCode, url, ErrNonExistentDemFile)
-			return "", nil, err
+			return "", err
 		}
 
 		msg := fmt.Sprintf("received a %d error during request", resp.StatusCode)
-		return "", nil, errors.New(msg)
+		return "", errors.New(msg)
 	}
 
-	b, err := io.ReadAll(resp.Body)
-
-	if err != nil {
-		return "", nil, fmt.Errorf("cannot download file %s. cause: %w", url, err)
-	}
-
-	err = d.saveZipHgtFile(demFilepath, b)
-
-	if err != nil {
-		return "", nil, fmt.Errorf("cannot save %s file. cause: %w", demFilepath, err)
+	if err := d.streamZipHgtFile(demFilepath, resp.Body, maxDownloadBytes); err != nil {
+		return "", fmt.Errorf("cannot save %s file. cause: %w", demFilepath, err)
 	}
 
 	duration := time.Since(start)
 
 	log.Infof("File %s downloaded in %s", filename, duration)
 
-	return demFilepath, b, nil
+	return demFilepath, nil
 }
 
-func (d *Downloader) saveZipHgtFile(path string, bytes []byte) error {
+// streamZipHgtFile streams src (the HTTP response body) directly to a temp
+// file next to path and renames it into place on success, instead of
+// buffering the whole download in memory first (the previous io.ReadAll
+// approach). maxBytes bounds how much it will write; if src still has data
+// once that budget is exhausted, the partial temp file is removed and an
+// error is returned instead of silently treating a truncated download as
+// complete - same truncation-detection technique as extractZipEntry (round 2):
+// copy up to the cap, then try to read one more byte to tell "ended exactly at
+// the cap" apart from "there was more data".
+func (d *Downloader) streamZipHgtFile(path string, src io.Reader, maxBytes int64) error {
 	if d.checkIfDemFileExists(path) {
 		return nil
 	}
 
-	err := os.WriteFile(path, bytes, 0644)
+	tmpFile, err := os.CreateTemp(filepath.Dir(path), ".dl-*.tmp")
 
 	if err != nil {
-		return fmt.Errorf("cannot save HGT file %s. cause: %w", path, err)
+		return fmt.Errorf("cannot create temporary download file. Cause: %w", err)
+	}
+
+	tmpPath := tmpFile.Name()
+
+	written, copyErr := io.Copy(tmpFile, io.LimitReader(src, maxBytes))
+	closeErr := tmpFile.Close()
+
+	if copyErr != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("cannot write %s file. cause: %w", path, copyErr)
+	}
+
+	if closeErr != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("cannot close %s file. cause: %w", path, closeErr)
+	}
+
+	if written == maxBytes {
+		extra := make([]byte, 1)
+		n, _ := src.Read(extra)
+
+		if n > 0 {
+			os.Remove(tmpPath)
+			return fmt.Errorf("download exceeds the %d bytes size limit", maxBytes)
+		}
+	}
+
+	if err := os.Rename(tmpPath, path); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("cannot rename %s file. cause: %w", path, err)
 	}
 
 	log.Infof("Zip file saved on %s", path)
@@ -322,9 +385,16 @@ func (d *Downloader) unzipDemFile(path string) (string, error) {
 // as a guard against zip bomb style payloads from an untrusted source.
 const maxUncompressedZipBytes = 1 << 30 // 1 GiB
 
+// unzip extracts zipFile into destFolder transactionally: every entry is
+// first extracted into a temporary directory created inside destFolder (so
+// the final publish step is a same-filesystem, effectively-atomic rename, not
+// a copy); only once every entry has extracted successfully does a second
+// pass move each file into its real path under destFolder. If extraction
+// fails partway through, the deferred cleanup removes the temp directory
+// (and everything in it) before returning, so a failure never leaves
+// already-extracted entries behind in destFolder - unlike the previous
+// extract-directly-into-destFolder approach.
 func (d *Downloader) unzip(zipFile string, destFolder string) ([]string, error) {
-	var files []string
-
 	r, err := zip.OpenReader(zipFile)
 	if err != nil {
 		return nil, err
@@ -335,24 +405,32 @@ func (d *Downloader) unzip(zipFile string, destFolder string) ([]string, error) 
 		return nil, err
 	}
 
-	absDestFolder, err := filepath.Abs(destFolder)
+	tmpDir, err := os.MkdirTemp(destFolder, ".unzip-*")
+	if err != nil {
+		return nil, fmt.Errorf("cannot create temporary extraction dir. Cause: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	absTmpDir, err := filepath.Abs(tmpDir)
 	if err != nil {
 		return nil, err
 	}
 
+	var relPaths []string
 	var totalBytes int64
 
 	for _, f := range r.File {
-		path := filepath.Join(destFolder, f.Name)
+		path := filepath.Join(tmpDir, f.Name)
 
-		// Reject entries whose name would resolve outside destFolder
-		// (Zip Slip), whether via "../" segments or an absolute path.
+		// Reject entries whose name would resolve outside tmpDir (Zip Slip,
+		// via "../" segments or an absolute path) before anything ever
+		// touches destFolder itself.
 		absPath, err := filepath.Abs(path)
 		if err != nil {
 			return nil, err
 		}
 
-		if absPath != absDestFolder && !strings.HasPrefix(absPath, absDestFolder+string(os.PathSeparator)) {
+		if absPath != absTmpDir && !strings.HasPrefix(absPath, absTmpDir+string(os.PathSeparator)) {
 			return nil, fmt.Errorf("zip entry %q escapes destination folder", f.Name)
 		}
 
@@ -384,7 +462,30 @@ func (d *Downloader) unzip(zipFile string, destFolder string) ([]string, error) 
 		// (possibly wrong) declared size checked above.
 		totalBytes += written
 
-		files = append(files, path)
+		rel, err := filepath.Rel(tmpDir, path)
+		if err != nil {
+			return nil, err
+		}
+
+		relPaths = append(relPaths, rel)
+	}
+
+	// Every entry extracted successfully - publish by moving each file from
+	// the temp dir into its real path under destFolder.
+	files := make([]string, 0, len(relPaths))
+
+	for _, rel := range relPaths {
+		finalPath := filepath.Join(destFolder, rel)
+
+		if err := os.MkdirAll(filepath.Dir(finalPath), 0755); err != nil {
+			return nil, err
+		}
+
+		if err := os.Rename(filepath.Join(tmpDir, rel), finalPath); err != nil {
+			return nil, fmt.Errorf("cannot publish extracted entry %q. Cause: %w", rel, err)
+		}
+
+		files = append(files, finalPath)
 	}
 
 	return files, nil
