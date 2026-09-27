@@ -101,20 +101,26 @@ func (d *Downloader) DownloadAllDemFiles() error {
 
 	chunks := partitionSlice(d.datasetBbox.Features, 100)
 
+	var c int64
+	var counterMutex sync.Mutex
+	total := len(d.datasetBbox.Features)
+
 	for _, chunk := range chunks {
-		var c int64
 		var wg sync.WaitGroup
 
 		for _, feature := range chunk {
 			wg.Add(1)
 
 			go func(feature *geojson.Feature) {
+				defer wg.Done()
+
 				filename := feature.Properties.MustString("dataFile")
 				url := tileUrl(d.BasePath, filename)
 				path, _, err := d.downloadZippedDemFile(url)
 
 				if err != nil {
 					log.Errorf("cannot download HGT file %s. Cause %s", url, err)
+					return
 				}
 
 				_, err = d.unzipDemFile(path)
@@ -123,9 +129,12 @@ func (d *Downloader) DownloadAllDemFiles() error {
 					log.Errorf("cannot unzip file %s. Cause %s", url, err)
 				}
 
+				counterMutex.Lock()
 				c++
+				n := c
+				counterMutex.Unlock()
 
-				log.Infof("%d / %d file(s) downloaded", c, len(d.datasetBbox.Features))
+				log.Infof("%d / %d file(s) downloaded", n, total)
 			}(feature)
 		}
 
@@ -192,7 +201,12 @@ func (d *Downloader) downloadZippedDemFile(url string) (string, []byte, error) {
 		return "", nil, fmt.Errorf("cannot generate EarthData API token. Cause %w", err)
 	}
 
-	client := &http.Client{}
+	client := d.HttpClient
+
+	if client == nil {
+		client = http.DefaultClient
+	}
+
 	req, _ := http.NewRequest("GET", url, nil)
 	req.Header.Add("Authorization", "Bearer "+token.AccessToken)
 
@@ -208,6 +222,8 @@ func (d *Downloader) downloadZippedDemFile(url string) (string, []byte, error) {
 		mutex.Unlock()
 		return "", nil, err
 	}
+
+	defer resp.Body.Close()
 
 	log.Infof("File %s request completed. Status: %d", filename, resp.StatusCode)
 
@@ -227,8 +243,6 @@ func (d *Downloader) downloadZippedDemFile(url string) (string, []byte, error) {
 		msg := fmt.Sprintf("received a %d error during request", resp.StatusCode)
 		return "", nil, errors.New(msg)
 	}
-
-	defer resp.Body.Close()
 
 	b, err := io.ReadAll(resp.Body)
 
@@ -301,6 +315,10 @@ func (d *Downloader) unzipDemFile(path string) (string, error) {
 	return files[0], nil
 }
 
+// maxUncompressedZipBytes bounds the total size unzip will write per archive,
+// as a guard against zip bomb style payloads from an untrusted source.
+const maxUncompressedZipBytes = 1 << 30 // 1 GiB
+
 func (d *Downloader) unzip(zipFile string, destFolder string) ([]string, error) {
 	var files []string
 
@@ -314,36 +332,75 @@ func (d *Downloader) unzip(zipFile string, destFolder string) ([]string, error) 
 		return nil, err
 	}
 
+	absDestFolder, err := filepath.Abs(destFolder)
+	if err != nil {
+		return nil, err
+	}
+
+	var totalBytes int64
+
 	for _, f := range r.File {
-		rc, err := f.Open()
+		path := filepath.Join(destFolder, f.Name)
+
+		// Reject entries whose name would resolve outside destFolder
+		// (Zip Slip), whether via "../" segments or an absolute path.
+		absPath, err := filepath.Abs(path)
 		if err != nil {
 			return nil, err
 		}
-		defer rc.Close()
 
-		path := filepath.Join(destFolder, f.Name)
-		if f.FileInfo().IsDir() {
-			os.MkdirAll(path, f.Mode())
-		} else {
-			if err := os.MkdirAll(filepath.Dir(path), f.Mode()); err != nil {
-				return nil, err
-			}
-
-			outFile, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
-			if err != nil {
-				return nil, err
-			}
-			defer outFile.Close()
-
-			files = append(files, outFile.Name())
-
-			if _, err := io.Copy(outFile, rc); err != nil {
-				return nil, err
-			}
+		if absPath != absDestFolder && !strings.HasPrefix(absPath, absDestFolder+string(os.PathSeparator)) {
+			return nil, fmt.Errorf("zip entry %q escapes destination folder", f.Name)
 		}
+
+		if f.FileInfo().IsDir() {
+			if err := os.MkdirAll(path, f.Mode()); err != nil {
+				return nil, err
+			}
+			continue
+		}
+
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			return nil, err
+		}
+
+		totalBytes += int64(f.UncompressedSize64)
+		if totalBytes > maxUncompressedZipBytes {
+			return nil, fmt.Errorf("zip file %s exceeds the %d bytes uncompressed size limit",
+				zipFile, maxUncompressedZipBytes)
+		}
+
+		if err := extractZipEntry(f, path); err != nil {
+			return nil, err
+		}
+
+		files = append(files, path)
 	}
 
 	return files, nil
+}
+
+// extractZipEntry writes a single zip entry to disk, closing both the entry
+// reader and the output file on every path (including errors) instead of
+// deferring them for the lifetime of the whole archive extraction.
+func extractZipEntry(f *zip.File, path string) error {
+	rc, err := f.Open()
+	if err != nil {
+		return err
+	}
+	defer rc.Close()
+
+	outFile, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
+	if err != nil {
+		return err
+	}
+	defer outFile.Close()
+
+	if _, err := io.Copy(outFile, io.LimitReader(rc, maxUncompressedZipBytes)); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (d *Downloader) isPointInsideDataSet(lon, lat float64) (bool, error) {

@@ -1,7 +1,6 @@
 package heightmap
 
 import (
-	"bufio"
 	"bytes"
 	"errors"
 	"fmt"
@@ -11,9 +10,9 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
-	"github.com/Jeffail/tunny"
 	"github.com/mazznoer/colorgrad"
 
 	"github.com/apeyroux/gosm"
@@ -33,6 +32,20 @@ const southAzimuth = 180
 
 // Azimuth angle pointing to the east
 const eastAzimuth = 90
+
+// NoElevationData marks a Point.Elevation whose value could not be read (missing
+// DEM file, coordinate outside coverage, decode error, etc). It reuses the void
+// value SRTM HGT files already use for "no data" so it can never be confused
+// with a valid elevation, including sea level (0).
+const NoElevationData int16 = -32768
+
+// Maximum zoom level accepted by GenerateAllTilesInZoomLevel. At zoom z the
+// number of tiles grows as 4^z; z=12 already means over 16 million tiles, which
+// is treated as the practical ceiling for a single batch request.
+const maxBatchZoomLevel = 12
+
+// Number of tiles generated concurrently by GenerateAllTilesInZoomLevel.
+const maxConcurrentTileGeneration = 100
 
 // Path separator
 var filePathSep = strings.ReplaceAll(strconv.QuoteRune(os.PathSeparator), "'", "")
@@ -117,26 +130,22 @@ func (t Generator) CreateHeightMapImage(lat, lon float64, side float64,
 		return []byte{}, err
 	}
 
-	var b bytes.Buffer
-	writer := bufio.NewWriter(&b)
+	var outputImg image.Image = imgRgba
+	validResolution := conf.Width > 0 && conf.Height > 0
 
-	if !conf.IgnoreWhenOriginalImageIsSmaller {
-		if conf.Height < step && conf.Width < step {
+	needsResize := validResolution && (conf.ForceInterpolation ||
+		(!conf.IgnoreWhenOriginalImageIsSmaller && (conf.Width < step || conf.Height < step)))
 
-			log.Infof("Heightmap image for coordinates (%f, %f) is smaller than the desired resolution. Resizing image...", lat, lon)
+	if needsResize {
+		log.Infof("Resizing heightmap image for coordinates (%f, %f) to %dx%d",
+			lat, lon, conf.Width, conf.Height)
 
-			resizedImg := resize.Resize(uint(conf.Width), uint(conf.Height), imgRgba, resize.Lanczos3)
-			err := png.Encode(writer, resizedImg)
-
-			if err != nil {
-				return []byte{}, errors.New("cannot resize heightmap image")
-			}
-		}
+		outputImg = resize.Resize(uint(conf.Width), uint(conf.Height), imgRgba, resize.Lanczos3)
 	}
 
-	err = png.Encode(writer, imgRgba)
+	var b bytes.Buffer
 
-	if err != nil {
+	if err := png.Encode(&b, outputImg); err != nil {
 		return []byte{}, errors.New("cannot encode PNG image")
 	}
 
@@ -154,41 +163,66 @@ func (t Generator) GetPointsElevations(points []Point) []Point {
 			}
 		}
 
-		points[i].Elevation, _, _ = t.ElevationDataset.ElevationAt(p.Lat, p.Lon)
+		e, _, err := t.ElevationDataset.ElevationAt(p.Lat, p.Lon)
+
+		if err != nil {
+			log.Warnf("cannot read elevation for coordinate %f, %f. Cause: %s", p.Lat, p.Lon, err)
+			points[i].Elevation = NoElevationData
+			continue
+		}
+
+		points[i].Elevation = e
 	}
 
 	return points
 }
 
-func (t Generator) GenerateAllTilesInZoomLevel(zoomLevel int) {
-	tiles := listTilesFromZoomLevel(zoomLevel)
-
-	pool := tunny.NewFunc(100, func(payload interface{}) interface{} {
-		start := time.Now()
-
-		tile := payload.(gosm.Tile)
-
-		_, err := t.GetTileHeightmap(tile.Z, tile.X, tile.Y, 256)
-
-		if err != nil {
-			log.Warnf("cannot generate heightmap for tile (%d, %d, %d). Cause: %s",
-				tile.X, tile.Y, tile.Z, err)
-			return nil
-		}
-
-		duration := time.Since(start)
-
-		log.Infof("Heightmap for tile (%d, %d, %d) generated. Took %s",
-			tile.X, tile.Y, tile.Z, duration)
-
-		return nil
-	})
-
-	for _, tile := range tiles {
-		pool.Process(tile)
+// GenerateAllTilesInZoomLevel generates every tile of an OSM zoom level. Tiles
+// are enumerated and dispatched incrementally, bounded by
+// maxConcurrentTileGeneration in-flight goroutines at a time, instead of
+// materializing all 4^zoomLevel tiles in memory up front. A single tile's
+// failure is logged and does not abort the rest of the batch.
+func (t Generator) GenerateAllTilesInZoomLevel(zoomLevel int) error {
+	if zoomLevel < 0 || zoomLevel > maxBatchZoomLevel {
+		return fmt.Errorf("zoom level %d is out of the allowed range [0, %d] for batch tile generation",
+			zoomLevel, maxBatchZoomLevel)
 	}
 
-	pool.Close()
+	numTiles := int(math.Exp2(float64(zoomLevel)))
+
+	sem := make(chan struct{}, maxConcurrentTileGeneration)
+	var wg sync.WaitGroup
+
+	for x := 0; x < numTiles; x++ {
+		for y := 0; y < numTiles; y++ {
+			x, y := x, y
+
+			wg.Add(1)
+			sem <- struct{}{}
+
+			go func() {
+				defer wg.Done()
+				defer func() { <-sem }()
+
+				start := time.Now()
+
+				_, err := t.GetTileHeightmap(zoomLevel, x, y, 256)
+
+				if err != nil {
+					log.Warnf("cannot generate heightmap for tile (%d, %d, %d). Cause: %s",
+						x, y, zoomLevel, err)
+					return
+				}
+
+				log.Infof("Heightmap for tile (%d, %d, %d) generated. Took %s",
+					x, y, zoomLevel, time.Since(start))
+			}()
+		}
+	}
+
+	wg.Wait()
+
+	return nil
 }
 
 func (t Generator) createHeightProfile(lat, lon float64, side float64, processFuncParam interface{},
@@ -219,7 +253,12 @@ func (t Generator) createHeightProfile(lat, lon float64, side float64, processFu
 				}
 			}
 
-			e, _, _ := t.ElevationDataset.ElevationAt(pLat, pLon)
+			e, _, elevationErr := t.ElevationDataset.ElevationAt(pLat, pLon)
+
+			if elevationErr != nil {
+				log.Debugf("cannot read elevation for coordinate %f, %f. Cause: %s", pLat, pLon, elevationErr)
+				e = NoElevationData
+			}
 
 			point := &Point{x / heightDataResolution, y / heightDataResolution, pLat, pLon, e}
 			err := processFunc(point, processFuncParam, i)
@@ -235,6 +274,14 @@ func (t Generator) createHeightProfile(lat, lon float64, side float64, processFu
 	return nil
 }
 
+// ErrTileNotCached is returned by getTileFromDisk when the requested tile has
+// not been generated yet, as opposed to some other read failure.
+var ErrTileNotCached = errors.New("tile is not cached")
+
+// saveTile writes a tile to a temporary file in the destination directory and
+// renames it into place. The rename is atomic, so a concurrent read of the
+// same tile (getTileFromDisk) never observes a partially written file, and two
+// concurrent writers of the same tile never corrupt each other's output.
 func (t Generator) saveTile(x int, y int, z, resolution int, bytes []byte) (string, error) {
 	dir := formatTileDirPath(t.Dir, x, z, resolution)
 	err := os.MkdirAll(dir, os.ModePerm)
@@ -243,28 +290,50 @@ func (t Generator) saveTile(x int, y int, z, resolution int, bytes []byte) (stri
 		return "", fmt.Errorf("cannot create directories to store tiles. Cause: %w", err)
 	}
 
-	filepath := fmt.Sprintf("%s/%d.png", dir, y)
+	path := fmt.Sprintf("%s/%d.png", dir, y)
 
-	if _, err := os.Stat(filepath); err == nil {
-		return filepath, nil
+	if _, err := os.Stat(path); err == nil {
+		return path, nil
 	}
 
 	log.Infof("Saving tile (%d, %d, %d) to disk", x, y, z)
 
-	err = os.WriteFile(filepath, bytes, 0644)
+	tmpFile, err := os.CreateTemp(dir, fmt.Sprintf(".%d.png.tmp-*", y))
 
 	if err != nil {
-		return "", fmt.Errorf("cannot create tile file. Cause: %w", err)
+		return "", fmt.Errorf("cannot create temporary tile file. Cause: %w", err)
 	}
 
-	return filepath, nil
+	tmpPath := tmpFile.Name()
+
+	if _, err := tmpFile.Write(bytes); err != nil {
+		tmpFile.Close()
+		os.Remove(tmpPath)
+		return "", fmt.Errorf("cannot write tile file. Cause: %w", err)
+	}
+
+	if err := tmpFile.Close(); err != nil {
+		os.Remove(tmpPath)
+		return "", fmt.Errorf("cannot close tile file. Cause: %w", err)
+	}
+
+	if err := os.Rename(tmpPath, path); err != nil {
+		os.Remove(tmpPath)
+		return "", fmt.Errorf("cannot rename tile file. Cause: %w", err)
+	}
+
+	return path, nil
 }
 
 func (t Generator) getTileFromDisk(x, y, z, resolution int) ([]byte, error) {
 	path := formatTilePath(t.Dir, x, y, z, resolution)
 
 	if _, err := os.Stat(path); err != nil {
-		return nil, errors.New("tile is not cached")
+		if os.IsNotExist(err) {
+			return nil, ErrTileNotCached
+		}
+
+		return nil, fmt.Errorf("cannot stat tile file %s. Cause: %w", path, err)
 	}
 
 	bytes, err := os.ReadFile(path)
@@ -294,20 +363,4 @@ func formatTileDirPath(dir string, x, z, resolution int) string {
 func calculateTileSizeKm(zoomLevel int) float64 {
 	const earthCircumferenceKm = 40075.0
 	return earthCircumferenceKm / math.Exp2(float64(zoomLevel))
-}
-
-func listTilesFromZoomLevel(zoomLevel int) []gosm.Tile {
-	numTiles := int(math.Exp2(float64(zoomLevel)))
-	tiles := make([]gosm.Tile, numTiles*numTiles)
-
-	c := 0
-
-	for x := 0; x < numTiles; x++ {
-		for y := 0; y < numTiles; y++ {
-			tiles[c] = *gosm.NewTileWithXY(x, y, zoomLevel)
-			c++
-		}
-	}
-
-	return tiles
 }
