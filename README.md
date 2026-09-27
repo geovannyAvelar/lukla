@@ -3,8 +3,6 @@ Lukla is an API for creating real world heightmaps based on
 [Shuttle Radar Topography Mission (SRTM30m)](https://en.wikipedia.org/wiki/Shuttle_Radar_Topography_Mission) 
 digital elevation model. 
 
-This program is pretty incomplete yet. I need to write unit tests and add some features.
-
 ![heigthmap](https://user-images.githubusercontent.com/7998054/216774590-7bf1eeb4-72a1-4731-8b60-4e09ed329f2d.png)
 
 ## Build instructions
@@ -40,12 +38,12 @@ None of the following variables are mandatory, but you will probably need some o
 
 This is a pretty simple project, and it might be improved.
 
-- Write unit tests and improve the code testability;
+- ~~Write unit tests and improve the code testability;~~
 - ~~Dockerize the app;~~ (**Implemented**)
 - ~~Capability to create a heightmap based on a bounding box (instead of just use OSM tiles);~~ (**Implemented**)
 - ~~Support to different zoom levels when creating OSM tiles (lower zoom levels must use bigger DEM 
  resolutions in order to maintain a good perfomance). Now, Lukla just support zoom levels bigger than 10;~~ (**Implemented**)
 - ~~Create a way to download SRTM30m files from NASA server;~~ (**Implemented**)
 - Support to different image extensions (e.g.: maybe TIFF), instead of just PNG files;
-- An option to cache tiles in AWS S3 (or other cloud storages);
+- A feature for caching tiles in AWS S3 (or other cloud storages);
 - ~~A CLI interface allowing heightmaps creation without API.~~ (**Implemented**)
