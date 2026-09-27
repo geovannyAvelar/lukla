@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"os"
 
 	"github.com/geovannyAvelar/lukla/heightmap"
@@ -66,8 +67,8 @@ func createHeightmap(cmd *cobra.Command, args []string) {
 
 	log.Infof("Generating heightmap for coordinates (%f, %f)", coords.Latitude, coords.Longitude)
 
-	b, err := heightmapGen.CreateHeightMapImage(coords.Latitude, coords.Longitude, coords.Side,
-		heightmap.ResolutionConfig{Width: coords.Resolution, Height: coords.Resolution,
+	b, err := heightmapGen.CreateHeightMapImage(context.Background(), coords.Latitude, coords.Longitude,
+		coords.Side, heightmap.ResolutionConfig{Width: coords.Resolution, Height: coords.Resolution,
 			IgnoreWhenOriginalImageIsSmaller: !interpolate})
 
 	if err != nil {

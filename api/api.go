@@ -57,10 +57,10 @@ type HttpApi struct {
 }
 
 type HeightMapGenerator interface {
-	GetTileHeightmap(z, x, y, resolution int) ([]byte, error)
-	CreateHeightMapImage(lat, lon float64, side float64, conf heightmap.ResolutionConfig) ([]byte, error)
+	GetTileHeightmap(ctx context.Context, z, x, y, resolution int) ([]byte, error)
+	CreateHeightMapImage(ctx context.Context, lat, lon float64, side float64, conf heightmap.ResolutionConfig) ([]byte, error)
 	GetPointsElevations(points []heightmap.Point) []heightmap.Point
-	GenerateAllTilesInZoomLevel(zoomLevel int) error
+	GenerateAllTilesInZoomLevel(ctx context.Context, zoomLevel int) (heightmap.TileGenerationResult, error)
 }
 
 type coordinate struct {
@@ -153,7 +153,7 @@ func (a HttpApi) handleTile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	bytes, err := a.HeightmapGen.GetTileHeightmap(tileCoords["z"], tileCoords["x"], tileCoords["y"],
+	bytes, err := a.HeightmapGen.GetTileHeightmap(r.Context(), tileCoords["z"], tileCoords["x"], tileCoords["y"],
 		resolution)
 
 	if err != nil {
@@ -190,7 +190,7 @@ func (a HttpApi) handleSquare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	b, err := a.HeightmapGen.CreateHeightMapImage(lat, lon, side,
+	b, err := a.HeightmapGen.CreateHeightMapImage(r.Context(), lat, lon, side,
 		heightmap.ResolutionConfig{Width: res, Height: res})
 
 	if err != nil {
@@ -249,10 +249,41 @@ func (a HttpApi) processAllTiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := a.HeightmapGen.GenerateAllTilesInZoomLevel(z); err != nil {
+	result, err := a.HeightmapGen.GenerateAllTilesInZoomLevel(r.Context(), z)
+
+	if err != nil {
 		http.Error(w, "cannot generate tiles. "+err.Error(), http.StatusBadRequest)
 		return
 	}
+
+	if r.Context().Err() != nil {
+		// The client is already gone (disconnected, or the request's own
+		// deadline passed) - nothing to usefully send back.
+		log.Warnf("tile batch for zoom %d was canceled after %d/%d tiles (%d succeeded, %d failed)",
+			z, result.Succeeded+result.Failed, result.Total, result.Succeeded, result.Failed)
+		return
+	}
+
+	body, err := json.Marshal(result)
+
+	if err != nil {
+		http.Error(w, "cannot encode tile generation result. Cause: "+err.Error(),
+			http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Add("Content-Type", "application/json")
+
+	switch {
+	case result.Failed == 0:
+		w.WriteHeader(http.StatusOK)
+	case result.Failed == result.Total:
+		w.WriteHeader(http.StatusInternalServerError)
+	default:
+		w.WriteHeader(http.StatusMultiStatus)
+	}
+
+	writeResponse(w, body)
 }
 
 // writeResponse writes the response body and logs a failure instead of

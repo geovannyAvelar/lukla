@@ -2,6 +2,7 @@ package heightmap
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"image"
@@ -11,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/mazznoer/colorgrad"
@@ -40,8 +42,19 @@ const eastAzimuth = 90
 const NoElevationData int16 = -32768
 
 // Maximum zoom level accepted by GenerateAllTilesInZoomLevel. At zoom z the
-// number of tiles grows as 4^z; z=12 already means over 16 million tiles, which
-// is treated as the practical ceiling for a single batch request.
+// number of tiles grows as 4^z:
+//
+//	z=0: 1              z=5: 1,024          z=9:  262,144
+//	z=1: 4               z=6: 4,096         z=10: 1,048,576
+//	z=2: 16              z=7: 16,384        z=11: 4,194,304
+//	z=3: 64              z=8: 65,536        z=12: 16,777,216
+//	z=4: 256
+//
+// z=12 (16,777,216 tiles) is treated as the practical ceiling for a single
+// batch request. This cap is not the primary defense against a runaway batch
+// any more, though - a caller can also cancel the request's context to stop
+// an in-progress batch (see GenerateAllTilesInZoomLevel), which is the more
+// useful control for a batch that turns out to be too large or too slow.
 const maxBatchZoomLevel = 12
 
 // Number of tiles generated concurrently by GenerateAllTilesInZoomLevel.
@@ -70,6 +83,31 @@ type Generator struct {
 	ElevationDataset *hgt.DataDir
 	SrtmDownloader   *srtm.Downloader
 	Dir              string
+
+	tileLocks      map[string]*sync.Mutex
+	tileLocksMutex sync.Mutex
+}
+
+// tileLockFor returns the mutex guarding a specific tile's generation, lazily
+// creating it on first use. Concurrent requests for the same tile key block on
+// this mutex instead of independently repeating the expensive generation work;
+// requests for different keys are unaffected by each other.
+func (t *Generator) tileLockFor(key string) *sync.Mutex {
+	t.tileLocksMutex.Lock()
+	defer t.tileLocksMutex.Unlock()
+
+	if t.tileLocks == nil {
+		t.tileLocks = make(map[string]*sync.Mutex)
+	}
+
+	mu, ok := t.tileLocks[key]
+
+	if !ok {
+		mu = &sync.Mutex{}
+		t.tileLocks[key] = mu
+	}
+
+	return mu
 }
 
 type ResolutionConfig struct {
@@ -79,8 +117,34 @@ type ResolutionConfig struct {
 	IgnoreWhenOriginalImageIsSmaller bool
 }
 
-// GetTileHeightmap Generate a heightmap with the same size of an OpenStreetMap (OSM) tile
-func (t Generator) GetTileHeightmap(z, x, y, resolution int) ([]byte, error) {
+// TileGenerationResult summarizes the outcome of a GenerateAllTilesInZoomLevel
+// batch. Total is the intended batch size (4^zoomLevel), known upfront.
+// Succeeded and Failed only count tiles actually attempted, so
+// Succeeded+Failed <= Total; when the batch was canceled partway through
+// (Canceled == true), the gap between Total and Succeeded+Failed is the
+// number of tiles that were never even dispatched.
+type TileGenerationResult struct {
+	Total     int  `json:"total"`
+	Succeeded int  `json:"succeeded"`
+	Failed    int  `json:"failed"`
+	Canceled  bool `json:"canceled,omitempty"`
+}
+
+// GetTileHeightmap Generate a heightmap with the same size of an OpenStreetMap (OSM) tile.
+// Concurrent requests for the same (x, y, z, resolution) tile are serialized so the
+// expensive generation only happens once: the second request blocks on the per-tile
+// lock, then finds the first request's result already on disk.
+func (t *Generator) GetTileHeightmap(ctx context.Context, z, x, y, resolution int) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	key := formatTilePath(t.Dir, x, y, z, resolution)
+
+	mu := t.tileLockFor(key)
+	mu.Lock()
+	defer mu.Unlock()
+
 	byteArray, err := t.getTileFromDisk(x, y, z, resolution)
 
 	if err == nil {
@@ -92,7 +156,7 @@ func (t Generator) GetTileHeightmap(z, x, y, resolution int) ([]byte, error) {
 
 	tileSide := calculateTileSizeKm(z) * 1000
 
-	byteArray, err = t.CreateHeightMapImage(lat, lon, tileSide,
+	byteArray, err = t.CreateHeightMapImage(ctx, lat, lon, tileSide,
 		ResolutionConfig{Width: resolution, Height: resolution, ForceInterpolation: true,
 			IgnoreWhenOriginalImageIsSmaller: false})
 
@@ -100,12 +164,14 @@ func (t Generator) GetTileHeightmap(z, x, y, resolution int) ([]byte, error) {
 		return []byte{}, err
 	}
 
-	go func() {
-		_, err := t.saveTile(x, y, z, resolution, byteArray)
-		if err != nil {
-			log.Errorf("cannot save tile (%d, %d, %d) to disk. Cause: %s", x, y, z, err)
-		}
-	}()
+	// Saved synchronously (unlike the earlier fire-and-forget goroutine) so
+	// that by the time the lock above is released, a waiting concurrent
+	// request for the same tile reliably finds it cached on disk instead of
+	// racing to regenerate it too. A save failure is still non-fatal: the
+	// image was already generated successfully, so it's returned regardless.
+	if _, err := t.saveTile(x, y, z, resolution, byteArray); err != nil {
+		log.Errorf("cannot save tile (%d, %d, %d) to disk. Cause: %s", x, y, z, err)
+	}
 
 	return byteArray, nil
 }
@@ -116,6 +182,35 @@ func (t Generator) GetTileHeightmap(z, x, y, resolution int) ([]byte, error) {
 // the requested Width/Height (or maxSamplingDimension, whichever is smaller) - avoiding
 // O((side/heightDataResolution)^2) sampling cost and memory for real-world-sized
 // low-zoom tiles that only need a small output image.
+//
+// Effective ground resolution: the returned stride *is* the effective ground
+// sample distance (GSD) of the resulting image, in meters/pixel:
+//
+//	stride = max(heightDataResolution, side / max(Width, Height))
+//
+// Two regimes fall out of that formula:
+//
+//   - Small area, normal resolution (the common case: a CLI heightmap, the
+//     /heightmap API endpoint, or a high-zoom OSM tile where `side` is on the
+//     order of a few km). `side / max(Width, Height)` comes out below the
+//     native 30m grid, so stride stays at 30m and every sample the DEM can
+//     offer is used - no detail is discarded. See
+//     TestSamplingStrideNativeResolutionPreservesDetail.
+//   - Huge area, normal resolution (a real-world OSM tile at low zoom, where
+//     `side` can be tens of thousands of km - the scenario that used to OOM,
+//     see TestCreateHeightMapImageBoundedForLargeArea). Here the stride
+//     coarsens well past 30m. This is not a quality regression: at that zoom,
+//     each output pixel already represents many kilometers of real terrain,
+//     so no combination of Width/Height could show finer relief than the
+//     coarsened stride already captures - sampling any more finely would just
+//     spend time and memory on data the image can never display.
+//
+// Only a caller that asks for no resolution at all (Width or Height <= 0)
+// over a huge area is capped by maxSamplingDimension instead of a requested
+// size; no current caller does this (every real caller - the API handlers,
+// the CLI, and GetTileHeightmap - always supplies a concrete resolution), so
+// this is a defensive fallback rather than a documented feature with its own
+// quality guarantee.
 func samplingStride(side float64, conf ResolutionConfig) int {
 	stride := int(heightDataResolution)
 
@@ -137,8 +232,12 @@ func samplingStride(side float64, conf ResolutionConfig) int {
 	return stride
 }
 
-func (t Generator) CreateHeightMapImage(lat, lon float64, side float64,
+func (t *Generator) CreateHeightMapImage(ctx context.Context, lat, lon float64, side float64,
 	conf ResolutionConfig) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	stride := samplingStride(side, conf)
 	step := int(side) / stride
 
@@ -152,15 +251,21 @@ func (t Generator) CreateHeightMapImage(lat, lon float64, side float64,
 	imgRgba := image.NewRGBA(image.Rectangle{Min: upLeft, Max: lowRight})
 	gradient, _ := colorgrad.NewGradient().Domain(0, 8865).Build()
 
-	err := t.createHeightProfile(lat, lon, side, stride, imgRgba, func(point *Point, i interface{}, index int) error {
-		imgRgba.Set(point.Y, point.X, gradient.At(float64(point.Elevation)))
-		return nil
-	})
+	failedPoints, err := t.createHeightProfile(ctx, lat, lon, side, stride, imgRgba,
+		func(point *Point, i interface{}, index int) error {
+			imgRgba.Set(point.Y, point.X, gradient.At(float64(point.Elevation)))
+			return nil
+		})
 
 	log.Infof("Height profile created for coordinates (%f, %f)", lat, lon)
 
 	if err != nil {
 		return []byte{}, err
+	}
+
+	if failedPoints > 0 {
+		log.Warnf("%d point(s) failed processing while creating the height profile for "+
+			"coordinates (%f, %f)", failedPoints, lat, lon)
 	}
 
 	var outputImg image.Image = imgRgba
@@ -185,10 +290,12 @@ func (t Generator) CreateHeightMapImage(lat, lon float64, side float64,
 	return b.Bytes(), nil
 }
 
-func (t Generator) GetPointsElevations(points []Point) []Point {
+func (t *Generator) GetPointsElevations(points []Point) []Point {
 	for i, p := range points {
 		if t.SrtmDownloader != nil {
-			_, err := t.SrtmDownloader.DownloadDemFile(p.Lat, p.Lon)
+			// Unrelated to any tile batch, so there's no request-scoped
+			// context to propagate here.
+			_, err := t.SrtmDownloader.DownloadDemFile(context.Background(), p.Lat, p.Lon)
 
 			if err != nil {
 				msg := "cannot download digital elevation model file for coordinate %f, %f. Cause: %s"
@@ -214,20 +321,36 @@ func (t Generator) GetPointsElevations(points []Point) []Point {
 // are enumerated and dispatched incrementally, bounded by
 // maxConcurrentTileGeneration in-flight goroutines at a time, instead of
 // materializing all 4^zoomLevel tiles in memory up front. A single tile's
-// failure is logged and does not abort the rest of the batch.
-func (t Generator) GenerateAllTilesInZoomLevel(zoomLevel int) error {
+// failure is logged, counted in the returned result, and does not abort the
+// rest of the batch. The returned error is only set for a structural
+// rejection (an invalid zoom level) that means no work was attempted at all;
+// once the batch starts, its outcome - including a partial failure or an
+// early stop from ctx being canceled - is fully described by the returned
+// TileGenerationResult. Canceling ctx stops new tiles from being dispatched
+// and, via GetTileHeightmap -> CreateHeightMapImage -> createHeightProfile,
+// interrupts tiles already in progress too.
+func (t *Generator) GenerateAllTilesInZoomLevel(ctx context.Context, zoomLevel int) (TileGenerationResult, error) {
 	if zoomLevel < 0 || zoomLevel > maxBatchZoomLevel {
-		return fmt.Errorf("zoom level %d is out of the allowed range [0, %d] for batch tile generation",
+		return TileGenerationResult{}, fmt.Errorf(
+			"zoom level %d is out of the allowed range [0, %d] for batch tile generation",
 			zoomLevel, maxBatchZoomLevel)
 	}
 
 	numTiles := int(math.Exp2(float64(zoomLevel)))
+	total := numTiles * numTiles
 
 	sem := make(chan struct{}, maxConcurrentTileGeneration)
 	var wg sync.WaitGroup
 
+	var succeeded, failed int64
+
+dispatch:
 	for x := 0; x < numTiles; x++ {
 		for y := 0; y < numTiles; y++ {
+			if ctx.Err() != nil {
+				break dispatch
+			}
+
 			x, y := x, y
 
 			wg.Add(1)
@@ -239,13 +362,16 @@ func (t Generator) GenerateAllTilesInZoomLevel(zoomLevel int) error {
 
 				start := time.Now()
 
-				_, err := t.GetTileHeightmap(zoomLevel, x, y, 256)
+				_, err := t.GetTileHeightmap(ctx, zoomLevel, x, y, 256)
 
 				if err != nil {
 					log.Warnf("cannot generate heightmap for tile (%d, %d, %d). Cause: %s",
 						x, y, zoomLevel, err)
+					atomic.AddInt64(&failed, 1)
 					return
 				}
+
+				atomic.AddInt64(&succeeded, 1)
 
 				log.Infof("Heightmap for tile (%d, %d, %d) generated. Took %s",
 					x, y, zoomLevel, time.Since(start))
@@ -255,11 +381,24 @@ func (t Generator) GenerateAllTilesInZoomLevel(zoomLevel int) error {
 
 	wg.Wait()
 
-	return nil
+	return TileGenerationResult{
+		Total:     total,
+		Succeeded: int(atomic.LoadInt64(&succeeded)),
+		Failed:    int(atomic.LoadInt64(&failed)),
+		Canceled:  ctx.Err() != nil,
+	}, nil
 }
 
-func (t Generator) createHeightProfile(lat, lon float64, side float64, stride int,
-	processFuncParam interface{}, processFunc heightProfileProcessFunc) error {
+// createHeightProfile samples the DEM over a lat/lon square and invokes
+// processFunc once per sample. It returns the number of samples whose
+// processFunc call returned an error (logged individually, but otherwise
+// non-fatal - the profile keeps going) so callers can surface that a profile
+// "succeeded" only partially, instead of it being silently discarded as it
+// was before. It checks ctx before each sample and returns ctx.Err() early if
+// canceled, so an in-progress profile stops promptly instead of running to
+// completion after the caller has stopped waiting for it.
+func (t *Generator) createHeightProfile(ctx context.Context, lat, lon float64, side float64, stride int,
+	processFuncParam interface{}, processFunc heightProfileProcessFunc) (failedPoints int, err error) {
 	i := 0
 
 	side = math.Ceil(side)
@@ -269,20 +408,24 @@ func (t Generator) createHeightProfile(lat, lon float64, side float64, stride in
 		geodesic.WGS84.Direct(lat, lon, southAzimuth, float64(x), &newLat, &newLon, nil)
 
 		for y := 0; y < int(side); y = y + stride {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return failedPoints, ctxErr
+			}
+
 			var pLat, pLon float64
 			geodesic.WGS84.Direct(newLat, newLon, eastAzimuth, float64(y), &pLat, &pLon, nil)
 
 			if t.SrtmDownloader != nil {
-				_, err := t.SrtmDownloader.DownloadDemFile(pLat, pLon)
+				_, downloadErr := t.SrtmDownloader.DownloadDemFile(ctx, pLat, pLon)
 
-				if err != nil {
-					if errors.Is(err, srtm.ErrTileNotInsideSrtmCoverage) {
+				if downloadErr != nil {
+					if errors.Is(downloadErr, srtm.ErrTileNotInsideSrtmCoverage) {
 						continue
 					}
 
 					msg := "cannot download digital elevation model file for coordinate %f, %f. Cause: %s"
-					log.Debugf(msg, pLat, pLon, err)
-					return err
+					log.Debugf(msg, pLat, pLon, downloadErr)
+					return failedPoints, downloadErr
 				}
 			}
 
@@ -294,17 +437,18 @@ func (t Generator) createHeightProfile(lat, lon float64, side float64, stride in
 			}
 
 			point := &Point{x / stride, y / stride, pLat, pLon, e}
-			err := processFunc(point, processFuncParam, i)
+			procErr := processFunc(point, processFuncParam, i)
 
-			if err != nil {
-				log.Errorf("cannot process point (%d, %d). Cause: %s", point.X, point.Y, err)
+			if procErr != nil {
+				log.Errorf("cannot process point (%d, %d). Cause: %s", point.X, point.Y, procErr)
+				failedPoints++
 			}
 
 			i++
 		}
 	}
 
-	return nil
+	return failedPoints, nil
 }
 
 // ErrTileNotCached is returned by getTileFromDisk when the requested tile has
@@ -315,7 +459,7 @@ var ErrTileNotCached = errors.New("tile is not cached")
 // renames it into place. The rename is atomic, so a concurrent read of the
 // same tile (getTileFromDisk) never observes a partially written file, and two
 // concurrent writers of the same tile never corrupt each other's output.
-func (t Generator) saveTile(x int, y int, z, resolution int, bytes []byte) (string, error) {
+func (t *Generator) saveTile(x int, y int, z, resolution int, bytes []byte) (string, error) {
 	dir := formatTileDirPath(t.Dir, x, z, resolution)
 	err := os.MkdirAll(dir, os.ModePerm)
 
@@ -358,7 +502,7 @@ func (t Generator) saveTile(x int, y int, z, resolution int, bytes []byte) (stri
 	return path, nil
 }
 
-func (t Generator) getTileFromDisk(x, y, z, resolution int) ([]byte, error) {
+func (t *Generator) getTileFromDisk(x, y, z, resolution int) ([]byte, error) {
 	path := formatTilePath(t.Dir, x, y, z, resolution)
 
 	if _, err := os.Stat(path); err != nil {

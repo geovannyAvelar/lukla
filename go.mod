@@ -5,7 +5,6 @@ go 1.19
 require github.com/petoc/hgt v1.0.1
 
 require (
-	github.com/Jeffail/tunny v0.1.4
 	github.com/apeyroux/gosm v0.0.0-20141123101329-8f3e37d8629e
 	github.com/go-chi/chi v1.5.4
 	github.com/gorilla/handlers v1.5.1

@@ -15,13 +15,15 @@ import (
 )
 
 type HeightmapGenTest struct {
+	TileResult heightmap.TileGenerationResult
+	TileErr    error
 }
 
-func (h HeightmapGenTest) GetTileHeightmap(z, x, y, resolution int) ([]byte, error) {
+func (h HeightmapGenTest) GetTileHeightmap(ctx context.Context, z, x, y, resolution int) ([]byte, error) {
 	return []byte{}, nil
 }
 
-func (h HeightmapGenTest) CreateHeightMapImage(lat, lon, side float64, conf heightmap.ResolutionConfig) ([]byte, error) {
+func (h HeightmapGenTest) CreateHeightMapImage(ctx context.Context, lat, lon, side float64, conf heightmap.ResolutionConfig) ([]byte, error) {
 	return []byte{}, nil
 }
 
@@ -29,8 +31,8 @@ func (h HeightmapGenTest) GetPointsElevations(points []heightmap.Point) []height
 	return points
 }
 
-func (h HeightmapGenTest) GenerateAllTilesInZoomLevel(zoomLevel int) error {
-	return nil
+func (h HeightmapGenTest) GenerateAllTilesInZoomLevel(ctx context.Context, zoomLevel int) (heightmap.TileGenerationResult, error) {
+	return h.TileResult, h.TileErr
 }
 
 func TestHandleTile(t *testing.T) {
@@ -377,5 +379,78 @@ func TestProcessAllTilesRejectsZoomAboveLimit(t *testing.T) {
 
 	if status := rr.Code; status != http.StatusBadRequest {
 		t.Errorf("expected status %d for zoom above limit, got %d", http.StatusBadRequest, status)
+	}
+}
+
+// TestProcessAllTilesStatusReflectsBatchOutcome is a regression test for the
+// endpoint always answering 200 with an empty body regardless of how many
+// tiles in the batch actually failed.
+func TestProcessAllTilesStatusReflectsBatchOutcome(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		result     heightmap.TileGenerationResult
+		wantStatus int
+	}{
+		{"all succeeded", heightmap.TileGenerationResult{Total: 4, Succeeded: 4, Failed: 0}, http.StatusOK},
+		{"partial failure", heightmap.TileGenerationResult{Total: 4, Succeeded: 2, Failed: 2}, http.StatusMultiStatus},
+		{"all failed", heightmap.TileGenerationResult{Total: 4, Succeeded: 0, Failed: 4}, http.StatusInternalServerError},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			req := httptest.NewRequest("POST", "/processTiles/1", nil)
+			rctx := chi.NewRouteContext()
+			rctx.URLParams.Add("z", "1")
+			req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+			a := HttpApi{HeightmapGen: HeightmapGenTest{TileResult: tt.result}}
+
+			rr := httptest.NewRecorder()
+			http.HandlerFunc(a.processAllTiles).ServeHTTP(rr, req)
+
+			if status := rr.Code; status != tt.wantStatus {
+				t.Errorf("expected status %d, got %d", tt.wantStatus, status)
+			}
+
+			var got heightmap.TileGenerationResult
+			if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+				t.Fatalf("cannot unmarshal response body: %s. Body: %s", err, rr.Body.String())
+			}
+
+			if got != tt.result {
+				t.Errorf("expected response body %+v, got %+v", tt.result, got)
+			}
+		})
+	}
+}
+
+// TestProcessAllTilesWritesNoBodyWhenRequestCanceled is a regression test for
+// wasted work: when the client is already gone, the handler shouldn't bother
+// marshaling and writing a response nobody will read.
+func TestProcessAllTilesWritesNoBodyWhenRequestCanceled(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	req := httptest.NewRequest("POST", "/processTiles/1", nil).WithContext(ctx)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("z", "1")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	a := HttpApi{HeightmapGen: HeightmapGenTest{
+		TileResult: heightmap.TileGenerationResult{Total: 4, Succeeded: 1, Failed: 0, Canceled: true},
+	}}
+
+	rr := httptest.NewRecorder()
+	http.HandlerFunc(a.processAllTiles).ServeHTTP(rr, req)
+
+	if rr.Body.Len() != 0 {
+		t.Errorf("expected no response body for an already-canceled request, got: %s", rr.Body.String())
 	}
 }

@@ -2,6 +2,7 @@ package srtm
 
 import (
 	"archive/zip"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -41,22 +42,29 @@ type Downloader struct {
 	HttpClient               *http.Client
 	Api                      *EarthdataApi
 	datasetBbox              *geojson.FeatureCollection
+	initOnce                 sync.Once
 	nonExistentZipFiles      *map[string]bool
 	nonExistentZipFilesMutex *sync.Mutex
 	downloads                map[string]*sync.Mutex
 	downloadsMutex           *sync.Mutex
 }
 
-func (d *Downloader) DownloadDemFile(pLat, pLon float64) (string, error) {
-	if d.nonExistentZipFiles == nil {
+// ensureInit lazily initializes the Downloader's internal maps exactly once,
+// even when called concurrently by multiple goroutines sharing the same
+// Downloader (as happens in the HTTP server, where one Downloader instance is
+// shared across requests). Without sync.Once here, concurrent first calls
+// would race on creating these maps.
+func (d *Downloader) ensureInit() {
+	d.initOnce.Do(func() {
 		d.nonExistentZipFiles = &map[string]bool{}
 		d.nonExistentZipFilesMutex = &sync.Mutex{}
-	}
-
-	if d.downloads == nil {
 		d.downloads = make(map[string]*sync.Mutex)
 		d.downloadsMutex = &sync.Mutex{}
-	}
+	})
+}
+
+func (d *Downloader) DownloadDemFile(ctx context.Context, pLat, pLon float64) (string, error) {
+	d.ensureInit()
 
 	filename := generateZipDemFileName(pLat, pLon)
 	zipFilepath := d.Dir + filePathSep + filename
@@ -65,7 +73,7 @@ func (d *Downloader) DownloadDemFile(pLat, pLon float64) (string, error) {
 	demFilePath = strings.ReplaceAll(demFilePath, ".SRTMGL1", "")
 
 	if !d.checkIfDemFileExists(demFilePath) {
-		zipPath, _, err := d.downloadZippedDemFileWithCoordinates(pLat, pLon)
+		zipPath, _, err := d.downloadZippedDemFileWithCoordinates(ctx, pLat, pLon)
 
 		if err != nil {
 			return "", fmt.Errorf("cannot download HGT file for coordinates %f, %f. "+
@@ -83,15 +91,7 @@ func (d *Downloader) DownloadAllDemFiles() error {
 		d.BasePath = defaultSRTMServerURL
 	}
 
-	if d.nonExistentZipFiles == nil {
-		d.nonExistentZipFiles = &map[string]bool{}
-		d.nonExistentZipFilesMutex = &sync.Mutex{}
-	}
-
-	if d.downloads == nil {
-		d.downloads = make(map[string]*sync.Mutex)
-		d.downloadsMutex = &sync.Mutex{}
-	}
+	d.ensureInit()
 
 	err := d.loadDatasetBbox()
 
@@ -116,7 +116,10 @@ func (d *Downloader) DownloadAllDemFiles() error {
 
 				filename := feature.Properties.MustString("dataFile")
 				url := tileUrl(d.BasePath, filename)
-				path, _, err := d.downloadZippedDemFile(url)
+				// DownloadAllDemFiles is a one-shot CLI bulk download, not
+				// part of any per-request tile batch, so it has no natural
+				// cancellation source.
+				path, _, err := d.downloadZippedDemFile(context.Background(), url)
 
 				if err != nil {
 					log.Errorf("cannot download HGT file %s. Cause %s", url, err)
@@ -144,7 +147,7 @@ func (d *Downloader) DownloadAllDemFiles() error {
 	return nil
 }
 
-func (d *Downloader) downloadZippedDemFileWithCoordinates(lat, lon float64) (string, []byte, error) {
+func (d *Downloader) downloadZippedDemFileWithCoordinates(ctx context.Context, lat, lon float64) (string, []byte, error) {
 	if d.BasePath == "" {
 		d.BasePath = defaultSRTMServerURL
 	}
@@ -157,7 +160,7 @@ func (d *Downloader) downloadZippedDemFileWithCoordinates(lat, lon float64) (str
 
 	url := tileUrl(d.BasePath, filename)
 
-	return d.downloadZippedDemFile(url)
+	return d.downloadZippedDemFile(ctx, url)
 }
 
 // tileUrl builds a granule's download URL under the Earthdata Cloud layout:
@@ -168,7 +171,7 @@ func tileUrl(basePath, filename string) string {
 	return basePath + "/" + granuleDir + "/" + filename
 }
 
-func (d *Downloader) downloadZippedDemFile(url string) (string, []byte, error) {
+func (d *Downloader) downloadZippedDemFile(ctx context.Context, url string) (string, []byte, error) {
 	filename := filepath.Base(url)
 
 	d.downloadsMutex.Lock()
@@ -182,6 +185,7 @@ func (d *Downloader) downloadZippedDemFile(url string) (string, []byte, error) {
 	d.downloadsMutex.Unlock()
 
 	mutex.Lock()
+	defer mutex.Unlock()
 
 	demFilepath := d.Dir + filePathSep + filename
 
@@ -207,7 +211,12 @@ func (d *Downloader) downloadZippedDemFile(url string) (string, []byte, error) {
 		client = http.DefaultClient
 	}
 
-	req, _ := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+
+	if err != nil {
+		return "", nil, fmt.Errorf("cannot build request for %s. Cause: %w", url, err)
+	}
+
 	req.Header.Add("Authorization", "Bearer "+token.AccessToken)
 
 	log.Infof("Downloading file %s from SRTM30m server...", filename)
@@ -219,7 +228,6 @@ func (d *Downloader) downloadZippedDemFile(url string) (string, []byte, error) {
 	if err != nil {
 		err := fmt.Errorf("cannot download hgt file %s. Cause: %w", filename, err)
 		log.Errorf(err.Error())
-		mutex.Unlock()
 		return "", nil, err
 	}
 
@@ -228,8 +236,6 @@ func (d *Downloader) downloadZippedDemFile(url string) (string, []byte, error) {
 	log.Infof("File %s request completed. Status: %d", filename, resp.StatusCode)
 
 	if resp.StatusCode != 200 {
-		mutex.Unlock()
-
 		if resp.StatusCode == 404 {
 			d.nonExistentZipFilesMutex.Lock()
 			(*d.nonExistentZipFiles)[filename] = true
@@ -247,14 +253,12 @@ func (d *Downloader) downloadZippedDemFile(url string) (string, []byte, error) {
 	b, err := io.ReadAll(resp.Body)
 
 	if err != nil {
-		mutex.Unlock()
 		return "", nil, fmt.Errorf("cannot download file %s. cause: %w", url, err)
 	}
 
 	err = d.saveZipHgtFile(demFilepath, b)
 
 	if err != nil {
-		mutex.Unlock()
 		return "", nil, fmt.Errorf("cannot save %s file. cause: %w", demFilepath, err)
 	}
 
@@ -262,7 +266,6 @@ func (d *Downloader) downloadZippedDemFile(url string) (string, []byte, error) {
 
 	log.Infof("File %s downloaded in %s", filename, duration)
 
-	mutex.Unlock()
 	return demFilepath, b, nil
 }
 
@@ -364,15 +367,22 @@ func (d *Downloader) unzip(zipFile string, destFolder string) ([]string, error) 
 			return nil, err
 		}
 
-		totalBytes += int64(f.UncompressedSize64)
-		if totalBytes > maxUncompressedZipBytes {
+		// Fast rejection of an archive whose entries declare (via their own
+		// header, which a crafted zip could misstate) more total data than the
+		// limit allows, before spending any I/O on them.
+		if totalBytes+int64(f.UncompressedSize64) > maxUncompressedZipBytes {
 			return nil, fmt.Errorf("zip file %s exceeds the %d bytes uncompressed size limit",
 				zipFile, maxUncompressedZipBytes)
 		}
 
-		if err := extractZipEntry(f, path); err != nil {
-			return nil, err
+		written, err := extractZipEntry(f, path, maxUncompressedZipBytes-totalBytes)
+		if err != nil {
+			return nil, fmt.Errorf("cannot extract entry %q from %s. Cause: %w", f.Name, zipFile, err)
 		}
+
+		// Authoritative accounting: based on bytes actually written, not the
+		// (possibly wrong) declared size checked above.
+		totalBytes += written
 
 		files = append(files, path)
 	}
@@ -382,25 +392,56 @@ func (d *Downloader) unzip(zipFile string, destFolder string) ([]string, error) 
 
 // extractZipEntry writes a single zip entry to disk, closing both the entry
 // reader and the output file on every path (including errors) instead of
-// deferring them for the lifetime of the whole archive extraction.
-func extractZipEntry(f *zip.File, path string) error {
-	rc, err := f.Open()
-	if err != nil {
-		return err
-	}
-	defer rc.Close()
-
-	outFile, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
-	if err != nil {
-		return err
-	}
-	defer outFile.Close()
-
-	if _, err := io.Copy(outFile, io.LimitReader(rc, maxUncompressedZipBytes)); err != nil {
-		return err
+// deferring them for the lifetime of the whole archive extraction. It returns
+// the number of bytes actually written. remainingBudget bounds how many bytes
+// it will write; if the entry's real (decompressed) content is larger than
+// that, the partial output file is removed and an error is returned instead
+// of silently treating the truncated copy as a success.
+func extractZipEntry(f *zip.File, path string, remainingBudget int64) (written int64, err error) {
+	rc, openErr := f.Open()
+	if openErr != nil {
+		return 0, openErr
 	}
 
-	return nil
+	defer func() {
+		if cerr := rc.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("cannot close zip entry reader for %q. Cause: %w", f.Name, cerr)
+		}
+	}()
+
+	outFile, openErr := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
+	if openErr != nil {
+		return 0, openErr
+	}
+
+	written, copyErr := io.Copy(outFile, io.LimitReader(rc, remainingBudget))
+
+	closeErr := outFile.Close()
+
+	if copyErr != nil {
+		os.Remove(path)
+		return written, copyErr
+	}
+
+	if closeErr != nil {
+		os.Remove(path)
+		return written, closeErr
+	}
+
+	if written == remainingBudget {
+		// The entry may have been truncated by the LimitReader above: try to
+		// read one more byte from the (still open, unlimited) source to find
+		// out whether there was more data than the budget allowed.
+		extra := make([]byte, 1)
+		n, _ := rc.Read(extra)
+
+		if n > 0 {
+			os.Remove(path)
+			return written, fmt.Errorf("entry exceeds the uncompressed size limit")
+		}
+	}
+
+	return written, nil
 }
 
 func (d *Downloader) isPointInsideDataSet(lon, lat float64) (bool, error) {
