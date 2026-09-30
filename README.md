@@ -21,6 +21,25 @@ You can use Make to compile. Just use one of the following commands to compile t
 - ```make build-windows```
 - ```make build-darwin``` (MacOS)
 
+## Image formats
+
+Heightmaps can be generated as:
+
+| Format | Extension / `format` value | Content |
+|---|---|---|
+| PNG (default) | `png` | Colored gradient, RGBA |
+| JPEG | `jpg` | Colored gradient |
+| TIFF | `tif` | Colored gradient, RGBA |
+| GeoTIFF | `geotiff` | Colored gradient, RGBA, georeferenced in WGS84 (EPSG:4326) |
+| 16-bit PNG | `png16` | Grayscale elevation, 1 unit = 1 m. Negative elevations and no-data become 0 |
+| Elevation GeoTIFF | `dem.tif` (CLI: `dem`) | Single-band Float32 elevation in meters, georeferenced, no-data = -32768 |
+
+Elevation formats keep real values instead of the color gradient, so they are suited to game engines and GIS.
+
+- Tiles: use the extension in the URL, e.g. `/{z}/{x}/{y}.geotiff` or `/{z}/{x}/{y}.dem.tif`. Each format is cached separately.
+- `/heightmap`: add the `format` query parameter, e.g. `?format=dem.tif`.
+- CLI: `--format` flag, or inferred from the `--output` extension (`-o map.geotiff`, `-o map.dem.tif`).
+
 ## Environment variables
 None of the following variables are mandatory, but you will probably need some of them to correctly set up the API.
 
@@ -44,6 +63,6 @@ This is a pretty simple project, and it might be improved.
 - ~~Support to different zoom levels when creating OSM tiles (lower zoom levels must use bigger DEM 
  resolutions in order to maintain a good perfomance). Now, Lukla just support zoom levels bigger than 10;~~ (**Implemented**)
 - ~~Create a way to download SRTM30m files from NASA server;~~ (**Implemented**)
-- Support to different image extensions (e.g.: maybe TIFF), instead of just PNG files;
+- ~~Support to different image extensions (e.g.: maybe TIFF), instead of just PNG files;~~ (**Implemented**: PNG, JPEG, TIFF, GeoTIFF, 16-bit PNG and Float32 elevation GeoTIFF)
 - A feature for caching tiles in AWS S3 (or other cloud storages);
 - ~~A CLI interface allowing heightmaps creation without API.~~ (**Implemented**)

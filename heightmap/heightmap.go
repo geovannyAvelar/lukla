@@ -1,12 +1,10 @@
 package heightmap
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"image"
-	"image/png"
 	"math"
 	"os"
 	"strconv"
@@ -31,6 +29,9 @@ const heightDataResolution = 30.0
 
 // Azimuth angle pointing to the south
 const southAzimuth = 180
+
+// Approximate meters per degree of latitude, used to derive GeoTIFF pixel sizes
+const metersPerDegreeLat = 111320.0
 
 // Azimuth angle pointing to the east
 const eastAzimuth = 90
@@ -150,6 +151,8 @@ type ResolutionConfig struct {
 	Height                           int
 	ForceInterpolation               bool
 	IgnoreWhenOriginalImageIsSmaller bool
+	// Format is the output encoding. Zero value is PNG.
+	Format Format
 }
 
 // TileGenerationResult summarizes the outcome of a GenerateAllTilesInZoomLevel
@@ -170,16 +173,22 @@ type TileGenerationResult struct {
 // expensive generation only happens once: the second request blocks on the per-tile
 // lock, then finds the first request's result already on disk.
 func (t *Generator) GetTileHeightmap(ctx context.Context, z, x, y, resolution int) ([]byte, error) {
+	return t.GetTileHeightmapFormat(ctx, z, x, y, resolution, FormatPNG)
+}
+
+// GetTileHeightmapFormat is GetTileHeightmap with a selectable output format.
+// Each format is cached separately on disk.
+func (t *Generator) GetTileHeightmapFormat(ctx context.Context, z, x, y, resolution int, format Format) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 
-	key := formatTilePath(t.Dir, x, y, z, resolution)
+	key := formatTilePathFormat(t.Dir, x, y, z, resolution, format)
 
 	lock := t.acquireTileLock(key)
 	defer t.releaseTileLock(key, lock)
 
-	byteArray, err := t.getTileFromDisk(x, y, z, resolution)
+	byteArray, err := t.getTileFromDiskFormat(x, y, z, resolution, format)
 
 	if err == nil {
 		return byteArray, nil
@@ -192,7 +201,7 @@ func (t *Generator) GetTileHeightmap(ctx context.Context, z, x, y, resolution in
 
 	byteArray, err = t.CreateHeightMapImage(ctx, lat, lon, tileSide,
 		ResolutionConfig{Width: resolution, Height: resolution, ForceInterpolation: true,
-			IgnoreWhenOriginalImageIsSmaller: false})
+			IgnoreWhenOriginalImageIsSmaller: false, Format: format})
 
 	if err != nil {
 		return []byte{}, err
@@ -203,7 +212,7 @@ func (t *Generator) GetTileHeightmap(ctx context.Context, z, x, y, resolution in
 	// request for the same tile reliably finds it cached on disk instead of
 	// racing to regenerate it too. A save failure is still non-fatal: the
 	// image was already generated successfully, so it's returned regardless.
-	if _, err := t.saveTile(x, y, z, resolution, byteArray); err != nil {
+	if _, err := t.saveTileFormat(x, y, z, resolution, format, byteArray); err != nil {
 		log.Errorf("cannot save tile (%d, %d, %d) to disk. Cause: %s", x, y, z, err)
 	}
 
@@ -291,8 +300,26 @@ func (t *Generator) CreateHeightMapImage(ctx context.Context, lat, lon float64, 
 	imgRgba := image.NewRGBA(image.Rectangle{Min: upLeft, Max: lowRight})
 	gradient, _ := colorgrad.NewGradient().Domain(0, 8865).Build()
 
+	// Elevation formats keep the raw values (row-major, rows run south) instead
+	// of the colored image. Cells never written stay NoElevationData.
+	var elevations []float32
+
+	if conf.Format.IsElevation() {
+		elevations = make([]float32, step*step)
+		for i := range elevations {
+			elevations[i] = float32(NoElevationData)
+		}
+	}
+
 	failedPoints, err := t.createHeightProfile(ctx, lat, lon, side, stride, imgRgba,
 		func(point *Point, i interface{}, index int) error {
+			if elevations != nil {
+				if point.X < step && point.Y < step && point.Elevation != NoElevationData {
+					elevations[point.X*step+point.Y] = float32(point.Elevation)
+				}
+				return nil
+			}
+
 			imgRgba.Set(point.Y, point.X, gradient.At(float64(point.Elevation)))
 			return nil
 		})
@@ -308,11 +335,23 @@ func (t *Generator) CreateHeightMapImage(ctx context.Context, lat, lon float64, 
 			"coordinates (%f, %f)", failedPoints, lat, lon)
 	}
 
-	var outputImg image.Image = imgRgba
 	validResolution := conf.Width > 0 && conf.Height > 0
 
 	needsResize := validResolution && (conf.ForceInterpolation ||
 		(!conf.IgnoreWhenOriginalImageIsSmaller && (conf.Width < step || conf.Height < step)))
+
+	if elevations != nil {
+		outW, outH := step, step
+
+		if needsResize {
+			outW, outH = conf.Width, conf.Height
+			elevations = resampleElevation(elevations, step, step, outW, outH)
+		}
+
+		return encodeElevation(elevations, outW, outH, conf.Format, geoReference(lat, lon, side, outW, outH))
+	}
+
+	var outputImg image.Image = imgRgba
 
 	if needsResize {
 		log.Infof("Resizing heightmap image for coordinates (%f, %f) to %dx%d",
@@ -321,13 +360,16 @@ func (t *Generator) CreateHeightMapImage(ctx context.Context, lat, lon float64, 
 		outputImg = resize.Resize(uint(conf.Width), uint(conf.Height), imgRgba, resize.Lanczos3)
 	}
 
-	var b bytes.Buffer
+	outW, outH := outputImg.Bounds().Dx(), outputImg.Bounds().Dy()
+	geo := geoReference(lat, lon, side, outW, outH)
 
-	if err := png.Encode(&b, outputImg); err != nil {
-		return []byte{}, errors.New("cannot encode PNG image")
+	encoded, err := encodeImage(outputImg, conf.Format, geo)
+
+	if err != nil {
+		return []byte{}, err
 	}
 
-	return b.Bytes(), nil
+	return encoded, nil
 }
 
 func (t *Generator) GetPointsElevations(points []Point) []Point {
@@ -507,6 +549,10 @@ var ErrTileNotCached = errors.New("tile is not cached")
 // same tile (getTileFromDisk) never observes a partially written file, and two
 // concurrent writers of the same tile never corrupt each other's output.
 func (t *Generator) saveTile(x int, y int, z, resolution int, bytes []byte) (string, error) {
+	return t.saveTileFormat(x, y, z, resolution, FormatPNG, bytes)
+}
+
+func (t *Generator) saveTileFormat(x int, y int, z, resolution int, format Format, bytes []byte) (string, error) {
 	dir := formatTileDirPath(t.Dir, x, z, resolution)
 	err := os.MkdirAll(dir, os.ModePerm)
 
@@ -514,7 +560,7 @@ func (t *Generator) saveTile(x int, y int, z, resolution int, bytes []byte) (str
 		return "", fmt.Errorf("cannot create directories to store tiles. Cause: %w", err)
 	}
 
-	path := fmt.Sprintf("%s/%d.png", dir, y)
+	path := fmt.Sprintf("%s/%d.%s", dir, y, format.Extension())
 
 	if _, err := os.Stat(path); err == nil {
 		return path, nil
@@ -522,7 +568,7 @@ func (t *Generator) saveTile(x int, y int, z, resolution int, bytes []byte) (str
 
 	log.Infof("Saving tile (%d, %d, %d) to disk", x, y, z)
 
-	tmpFile, err := os.CreateTemp(dir, fmt.Sprintf(".%d.png.tmp-*", y))
+	tmpFile, err := os.CreateTemp(dir, fmt.Sprintf(".%d.%s.tmp-*", y, format.Extension()))
 
 	if err != nil {
 		return "", fmt.Errorf("cannot create temporary tile file. Cause: %w", err)
@@ -550,7 +596,11 @@ func (t *Generator) saveTile(x int, y int, z, resolution int, bytes []byte) (str
 }
 
 func (t *Generator) getTileFromDisk(x, y, z, resolution int) ([]byte, error) {
-	path := formatTilePath(t.Dir, x, y, z, resolution)
+	return t.getTileFromDiskFormat(x, y, z, resolution, FormatPNG)
+}
+
+func (t *Generator) getTileFromDiskFormat(x, y, z, resolution int, format Format) ([]byte, error) {
+	path := formatTilePathFormat(t.Dir, x, y, z, resolution, format)
 
 	if _, err := os.Stat(path); err != nil {
 		if os.IsNotExist(err) {
@@ -570,10 +620,14 @@ func (t *Generator) getTileFromDisk(x, y, z, resolution int) ([]byte, error) {
 }
 
 func formatTilePath(dir string, x, y, z, resolution int) string {
+	return formatTilePathFormat(dir, x, y, z, resolution, FormatPNG)
+}
+
+func formatTilePathFormat(dir string, x, y, z, resolution int, format Format) string {
 	dir = formatTileDirPath(dir, x, z, resolution)
 	yStr := fmt.Sprintf("%d", y)
 
-	return dir + filePathSep + yStr + ".png"
+	return dir + filePathSep + yStr + "." + format.Extension()
 }
 
 func formatTileDirPath(dir string, x, z, resolution int) string {
@@ -587,4 +641,15 @@ func formatTileDirPath(dir string, x, z, resolution int) string {
 func calculateTileSizeKm(zoomLevel int) float64 {
 	const earthCircumferenceKm = 40075.0
 	return earthCircumferenceKm / math.Exp2(float64(zoomLevel))
+}
+
+// geoReference derives the WGS84 placement of a w*h image covering `side`
+// meters south and east from the upper-left corner (lat, lon). Pixel sizes use
+// an approximate meters-per-degree, scaled by latitude for longitude.
+func geoReference(lat, lon, side float64, w, h int) *GeoReference {
+	sideDegLat := side / metersPerDegreeLat
+	sideDegLon := side / (metersPerDegreeLat * math.Max(math.Cos(lat*math.Pi/180), 1e-6))
+
+	return &GeoReference{Lat: lat, Lon: lon,
+		PixelSizeLat: sideDegLat / float64(h), PixelSizeLon: sideDegLon / float64(w)}
 }

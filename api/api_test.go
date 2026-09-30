@@ -24,6 +24,10 @@ func (h HeightmapGenTest) GetTileHeightmap(ctx context.Context, z, x, y, resolut
 	return []byte{}, nil
 }
 
+func (h HeightmapGenTest) GetTileHeightmapFormat(ctx context.Context, z, x, y, resolution int, format heightmap.Format) ([]byte, error) {
+	return []byte{}, nil
+}
+
 func (h HeightmapGenTest) CreateHeightMapImage(ctx context.Context, lat, lon, side float64, conf heightmap.ResolutionConfig) ([]byte, error) {
 	return []byte{}, nil
 }

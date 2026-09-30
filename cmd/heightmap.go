@@ -2,7 +2,10 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/geovannyAvelar/lukla/heightmap"
 	"github.com/spf13/cobra"
@@ -28,9 +31,10 @@ func CreateHeightMapCommand() *cobra.Command {
 	heightmap.Flags().Float64("latitude", 0.0, "Square initial latitude")
 	heightmap.Flags().Float64("longitude", 0.0, "Square initial longitude")
 	heightmap.Flags().Float64("side", 1000, "Side of the square in meters")
-	heightmap.Flags().Int("resolution", 256, "PNG image resolution")
+	heightmap.Flags().Int("resolution", 256, "Image resolution")
 	heightmap.Flags().Bool("interpolate", false, "Apply image resizing even when original image resolution is smaller than informed resolution")
-	heightmap.Flags().StringP("output", "o", "heightmap.png", "PNG image output path")
+	heightmap.Flags().StringP("output", "o", "heightmap.png", "Image output path. Format is taken from the extension (.png, .jpg, .tif, .geotiff) unless --format is set")
+	heightmap.Flags().String("format", "", "Image format: png, jpg, tif, geotiff, png16 (16-bit grayscale, meters) or dem (Float32 GeoTIFF, meters). Default: inferred from output extension")
 	heightmap.Flags().StringVar(&dotenvPath, "env", "", "Dot env file path")
 	heightmap.Flags().StringVar(&demPath, "dem-path", "", "Digital Elevation Model (DEM) files path")
 	heightmap.Flags().IntVar(&httpClientTimeout, "http-client-timeout", 0, "HTTP client request timeout")
@@ -67,15 +71,35 @@ func createHeightmap(cmd *cobra.Command, args []string) {
 
 	log.Infof("Generating heightmap for coordinates (%f, %f)", coords.Latitude, coords.Longitude)
 
-	b, err := heightmapGen.CreateHeightMapImage(context.Background(), coords.Latitude, coords.Longitude,
-		coords.Side, heightmap.ResolutionConfig{Width: coords.Resolution, Height: coords.Resolution,
-			IgnoreWhenOriginalImageIsSmaller: !interpolate})
+	output, err := cmd.Flags().GetString("output")
 
 	if err != nil {
 		handleErr(err)
 	}
 
-	output, err := cmd.Flags().GetString("output")
+	formatName, err := cmd.Flags().GetString("format")
+
+	if err != nil {
+		handleErr(err)
+	}
+
+	if formatName == "" {
+		formatName = filepath.Ext(output)
+
+		if strings.HasSuffix(strings.ToLower(output), ".dem.tif") {
+			formatName = "dem"
+		}
+	}
+
+	format, ok := heightmap.ParseFormat(formatName)
+
+	if !ok {
+		handleErr(fmt.Errorf("unsupported image format %q: use png, jpg, tif, geotiff, png16 or dem", formatName))
+	}
+
+	b, err := heightmapGen.CreateHeightMapImage(context.Background(), coords.Latitude, coords.Longitude,
+		coords.Side, heightmap.ResolutionConfig{Width: coords.Resolution, Height: coords.Resolution,
+			IgnoreWhenOriginalImageIsSmaller: !interpolate, Format: format})
 
 	if err != nil {
 		handleErr(err)

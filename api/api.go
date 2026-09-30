@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -59,6 +60,7 @@ type HttpApi struct {
 
 type HeightMapGenerator interface {
 	GetTileHeightmap(ctx context.Context, z, x, y, resolution int) ([]byte, error)
+	GetTileHeightmapFormat(ctx context.Context, z, x, y, resolution int, format heightmap.Format) ([]byte, error)
 	CreateHeightMapImage(ctx context.Context, lat, lon float64, side float64, conf heightmap.ResolutionConfig) ([]byte, error)
 	GetPointsElevations(points []heightmap.Point) []heightmap.Point
 	GenerateAllTilesInZoomLevel(ctx context.Context, zoomLevel int) (heightmap.TileGenerationResult, error)
@@ -86,8 +88,8 @@ func (a HttpApi) Run(port int) error {
 		r.Get("/health", a.handleHealth)
 		r.Get("/heightmap", a.handleSquare)
 		r.Post("/heightmap/points", a.handleHeightmapProfile)
-		r.Get("/{z}/{x}/{y}.png", a.handleTile)
-		r.Get("/{resolution}/{z}/{x}/{y}.png", a.handleTile)
+		r.Get("/{z}/{x}/{y}", a.handleTile)
+		r.Get("/{resolution}/{z}/{x}/{y}", a.handleTile)
 		r.Post("/processTiles/{z}", a.processAllTiles)
 	})
 
@@ -154,17 +156,26 @@ func (a HttpApi) handleTile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	bytes, err := a.HeightmapGen.GetTileHeightmap(r.Context(), tileCoords["z"], tileCoords["x"], tileCoords["y"],
-		resolution)
+	_, ext := splitExtension(chi.URLParam(r, "y"))
+
+	format, ok := heightmap.ParseFormat(ext)
+
+	if !ok {
+		http.Error(w, unsupportedFormatMsg, http.StatusBadRequest)
+		return
+	}
+
+	bytes, err := a.HeightmapGen.GetTileHeightmapFormat(r.Context(), tileCoords["z"], tileCoords["x"],
+		tileCoords["y"], resolution, format)
 
 	if err != nil {
 		http.Error(w, "cannot generate heightmap. "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	contentDisposition := fmt.Sprintf("inline; filename=\"%d.png\"", tileCoords["y"])
+	contentDisposition := fmt.Sprintf("inline; filename=\"%d.%s\"", tileCoords["y"], format.Extension())
 
-	w.Header().Add("Content-Type", "image/png")
+	w.Header().Add("Content-Type", format.ContentType())
 	w.Header().Add("Content-Disposition", contentDisposition)
 	writeResponse(w, bytes)
 }
@@ -191,16 +202,23 @@ func (a HttpApi) handleSquare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	format, ok := heightmap.ParseFormat(r.URL.Query().Get("format"))
+
+	if !ok {
+		http.Error(w, unsupportedFormatMsg, http.StatusBadRequest)
+		return
+	}
+
 	b, err := a.HeightmapGen.CreateHeightMapImage(r.Context(), lat, lon, side,
-		heightmap.ResolutionConfig{Width: res, Height: res})
+		heightmap.ResolutionConfig{Width: res, Height: res, Format: format})
 
 	if err != nil {
 		http.Error(w, "cannot generate heightmap. "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	w.Header().Add("Content-Type", "image/png")
-	w.Header().Add("Content-Disposition", "inline; filename=\"heightmap.png\"")
+	w.Header().Add("Content-Type", format.ContentType())
+	w.Header().Add("Content-Disposition", fmt.Sprintf("inline; filename=\"heightmap.%s\"", format.Extension()))
 	writeResponse(w, b)
 }
 
@@ -317,7 +335,7 @@ func (a HttpApi) getElevations(coordinates []coordinate) []coordinate {
 // [0, 2^z) range defined by the OSM/Web Mercator tile scheme for that zoom.
 func (a HttpApi) parseTileCoordinates(r *http.Request) (map[string]int, error) {
 	xParam := chi.URLParam(r, "x")
-	yParam := chi.URLParam(r, "y")
+	yParam, _ := splitExtension(chi.URLParam(r, "y"))
 	zParam := chi.URLParam(r, "z")
 
 	x, xParseErr := strconv.Atoi(xParam)
@@ -448,4 +466,16 @@ func (a HttpApi) parseSquareResolution(r *http.Request) (int, error) {
 	}
 
 	return res, nil
+}
+
+const unsupportedFormatMsg = "unsupported image format: use png, jpg, tif, geotiff, png16 or dem.tif"
+
+// splitExtension splits "12.png" into ("12", "png"), and "12.dem.tif" into ("12", "dem.tif"). No dot yields an empty
+// extension, which ParseFormat treats as PNG.
+func splitExtension(s string) (string, string) {
+	if i := strings.Index(s, "."); i >= 0 {
+		return s[:i], s[i+1:]
+	}
+
+	return s, ""
 }
